@@ -42,7 +42,7 @@ export default function Clientes() {
             Alert.alert('Error', 'No se pudo cerrar la sesion. Intenta nuevamente.');
             return;
           }
-          router.replace('/');
+          router.replace({ pathname: '/', params: { refresh: String(Date.now()) } });
         }
       }
     ]);
@@ -75,7 +75,10 @@ export default function Clientes() {
       const { data, error } = await supabase
         .from('customers')
         .select('*')
+        .not('Nivel', 'ilike', 'EMPLEADOS')
         .order('CardName', { ascending: true })
+        .order('CardCode', { ascending: true })
+        .order('Nivel', { ascending: true })
         .range(from, to);
 
       if (error) throw error;
@@ -109,6 +112,9 @@ export default function Clientes() {
 
   // Logica de filtrado multicampo (Nombre, Comercial, Codigo y RUC)
   const clientesFiltrados = clientes.filter((c) => {
+    const nivel = (c.Nivel || '').trim().toUpperCase();
+    if (nivel === 'EMPLEADOS') return false;
+
     const s = search.toLowerCase();
     const nombreLegal = (c.CardName || '').toLowerCase();
     const nombreComercial = (c.CardFName || '').toLowerCase();
@@ -189,7 +195,9 @@ export default function Clientes() {
           {!!errorMsg && <Text style={styles.errorText}>{errorMsg}</Text>}
           <FlatList
             data={clientesFiltrados}
-            keyExtractor={(item, index) => String(item.CardCode || item.RUC || `cliente-${index}`)}
+            keyExtractor={(item, index) =>
+              `${item.CardCode || 'sin-codigo'}-${item.Nivel || 'sin-nivel'}-${item.CardName || item.CardFName || 'sin-nombre'}-${index}`
+            }
             renderItem={renderCliente}
             contentContainerStyle={{ paddingBottom: 100 }}
             onEndReached={handleLoadMore}

@@ -1,19 +1,28 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   View, Text, TextInput, TouchableOpacity, StyleSheet, 
   Image, KeyboardAvoidingView, Platform, ScrollView 
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { supabase } from '../src/services/supabaseClient';
 import { COLORS, GLOBAL_STYLES } from '../src/constants/theme';
 import { Ionicons } from '@expo/vector-icons'; // Viene con Expo
 
+const PRIMARY_LOGO = require('../assets/logo.png');
+const FALLBACK_LOGO = require('../assets/mainlogo.png');
+
 export default function Login() {
   const router = useRouter();
+  const { refresh } = useLocalSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [useFallbackLogo, setUseFallbackLogo] = useState(false);
+
+  useEffect(() => {
+    setUseFallbackLogo(false);
+  }, [refresh]);
 
   const handleLogin = async () => {
     // 1. Validar Dominio
@@ -38,14 +47,15 @@ export default function Login() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
       style={styles.container}
     >
-      <ScrollView contentContainerStyle={styles.scrollContainer}>
+      <ScrollView key={String(refresh || 'default')} contentContainerStyle={styles.scrollContainer}>
         
         {/* Logo y Nombre de la App */}
         <View style={styles.header}>
           <Image 
-            source={require('../assets/logo.png')} 
+            source={useFallbackLogo ? FALLBACK_LOGO : PRIMARY_LOGO}
             style={styles.logo} 
             resizeMode="contain" 
+            onError={() => setUseFallbackLogo(true)}
           />
           <Text style={styles.appName}>Pedersen Connect</Text>
         </View>
