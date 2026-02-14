@@ -60,9 +60,9 @@ export default function Pedido() {
           <Text style={styles.emptyText}>El carrito está vacío</Text>
           <TouchableOpacity 
             style={[GLOBAL_STYLES.buttonPrimary, { marginTop: 20 }]}
-            onPress={() => router.back()}
-          >
-            <Text style={{ color: '#FFF', fontWeight: 'bold' }}>Volver al Catálogo</Text>
+            onPress={() => router.push('/catalogo')} // Forzamos ir a catálogo
+>
+            <Text style={{ color: '#FFF', fontWeight: 'bold' }}>Ir al Catálogo</Text>
           </TouchableOpacity>
         </View>
       ) : (
