@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, FlatList, StyleSheet, TouchableOpacity, SafeAreaView, Alert } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
-import { useCart } from '../src/context/CartContext';
-import { COLORS, GLOBAL_STYLES } from '../src/constants/theme';
+import { useCart } from '../../src/context/CartContext';
+import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
 
 export default function Pedido() {
   const router = useRouter();

@@ -1,6 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = 'https://jkkifutagnagdvpzepzs.supabase.co';
-const supabaseAnonKey = 'sb_publishable_DclEiuGlju-A17rWLUtfbg_OPwZ7aJu';
+// Expo detecta automáticamente las variables que empiezan con EXPO_PUBLIC_
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error("⚠️ Error: Las variables de entorno de Supabase no están cargadas.");
+}
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);

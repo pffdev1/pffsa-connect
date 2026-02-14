@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator, SafeAreaView } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { supabase } from '../src/services/supabaseClient';
-import { COLORS, GLOBAL_STYLES } from '../src/constants/theme';
-import { useCart } from '../src/context/CartContext'; // IMPORTANTE
+import { supabase } from '../../src/services/supabaseClient';
+import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
+import { useCart } from '../../src/context/CartContext'; // IMPORTANTE
 
 export default function Catalogo() {
   const { cardCode, listNum } = useLocalSearchParams();

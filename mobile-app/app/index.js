@@ -1,74 +1,141 @@
 import React, { useState } from 'react';
-import { View, Image, TextInput, TouchableOpacity, Text, StyleSheet, SafeAreaView, ActivityIndicator } from 'react-native';
+import { 
+  View, Text, TextInput, TouchableOpacity, StyleSheet, 
+  Image, KeyboardAvoidingView, Platform, ScrollView 
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { supabase } from '../src/services/supabaseClient';
-import { COLORS, GLOBAL_STYLES } from '../src/constants/theme'; // IMPORTAMOS EL BRANDING
+import { COLORS, GLOBAL_STYLES } from '../src/constants/theme';
+import { Ionicons } from '@expo/vector-icons'; // Viene con Expo
 
 export default function Login() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
+    // 1. Validar Dominio
+    if (!email.toLowerCase().endsWith('@pffsa.com')) {
+      alert('Acceso restringido: Debe usar su correo de @pffsa.com');
+      return;
+    }
+
     setLoading(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
+    
     if (error) {
-      alert(error.message);
+      alert('Error: Credenciales inválidas');
       setLoading(false);
     } else {
-      router.push('/clientes');
+      router.replace('/(tabs)/clientes');
     }
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
-        <Image source={require('../assets/mainlogo.png')} style={styles.logo} resizeMode="contain" />
+    <KeyboardAvoidingView 
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+      style={styles.container}
+    >
+      <ScrollView contentContainerStyle={styles.scrollContainer}>
         
-        <Text style={styles.title}>Fuerza de Ventas</Text>
-        
-        <View style={styles.form}>
-          <Text style={styles.label}>Correo Electrónico</Text>
-          <TextInput 
-            style={GLOBAL_STYLES.input} 
-            value={email} 
-            onChangeText={setEmail} 
-            autoCapitalize="none" 
+        {/* Logo y Nombre de la App */}
+        <View style={styles.header}>
+          <Image 
+            source={require('../assets/logo.png')} 
+            style={styles.logo} 
+            resizeMode="contain" 
           />
-          
-          <Text style={[styles.label, {marginTop: 15}]}>Contraseña</Text>
-          <TextInput 
-            style={GLOBAL_STYLES.input} 
-            secureTextEntry 
-            value={password} 
-            onChangeText={setPassword} 
+          <Text style={styles.appName}>Pedersen Connect</Text>
+        </View>
+
+        <View style={styles.form}>
+          <Text style={styles.label}>Correo Institucional</Text>
+          <TextInput
+            style={GLOBAL_STYLES.input}
+            placeholder="usuario@pffsa.com"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            value={email}
+            onChangeText={setEmail}
+            returnKeyType="next"
           />
 
+          <Text style={[styles.label, { marginTop: 15 }]}>Contraseña</Text>
+          <View style={styles.passwordContainer}>
+            <TextInput
+              style={styles.passwordInput}
+              placeholder="••••••••"
+              secureTextEntry={!showPassword}
+              value={password}
+              onChangeText={setPassword}
+            />
+            <TouchableOpacity 
+              onPress={() => setShowPassword(!showPassword)}
+              style={styles.eyeIcon}
+            >
+              <Ionicons 
+                name={showPassword ? "eye-off" : "eye"} 
+                size={22} 
+                color={COLORS.textLight} 
+              />
+            </TouchableOpacity>
+          </View>
+
           <TouchableOpacity 
-            style={[GLOBAL_STYLES.buttonPrimary, {marginTop: 30}]} 
+            style={[GLOBAL_STYLES.buttonPrimary, { marginTop: 30 }]} 
             onPress={handleLogin}
+            disabled={loading}
           >
-            {loading ? <ActivityIndicator color={COLORS.white} /> : <Text style={styles.btnText}>ENTRAR</Text>}
+            <Text style={styles.buttonText}>
+              {loading ? 'ACCEDIENDO...' : 'ENTRAR'}
+            </Text>
           </TouchableOpacity>
         </View>
-      </View>
-    </SafeAreaView>
+
+        {/* Footer con créditos */}
+        <View style={styles.footer}>
+          <Text style={styles.footerMain}>Desarrollado por el Dpto. de IT e Innovación</Text>
+          <Text style={styles.footerSub}>P.F.F.S.A. © 2026 | Versión 1.0.0</Text>
+        </View>
+
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.white },
-  content: { flex: 1, justifyContent: 'center', padding: 30 },
-  logo: { width: '100%', height: 80, marginBottom: 20 },
-  title: { 
-    fontSize: 22, 
+  scrollContainer: { flexGrow: 1, justifyContent: 'center', padding: 25 },
+  header: { alignItems: 'center', marginBottom: 40 },
+  logo: { width: 180, height: 80 },
+  appName: { 
+    fontSize: 24, 
     fontWeight: 'bold', 
     color: COLORS.primary, 
-    textAlign: 'center', 
-    marginBottom: 40 
+    marginTop: 10,
+    letterSpacing: 1
   },
   form: { width: '100%' },
-  label: { color: COLORS.textLight, marginBottom: 5, fontSize: 14, fontWeight: '600' },
-  btnText: { color: COLORS.white, fontWeight: 'bold', fontSize: 16 }
+  label: { color: COLORS.text, fontWeight: '600', marginBottom: 5, fontSize: 14 },
+  passwordContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 8,
+    backgroundColor: '#FFF',
+  },
+  passwordInput: {
+    flex: 1,
+    padding: 12,
+    fontSize: 16,
+    color: COLORS.text,
+  },
+  eyeIcon: { padding: 10 },
+  buttonText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 },
+  footer: { marginTop: 50, alignItems: 'center' },
+  footerMain: { color: COLORS.textLight, fontSize: 12, fontWeight: 'bold' },
+  footerSub: { color: COLORS.textLight, fontSize: 10, marginTop: 4 }
 });

@@ -3,6 +3,12 @@
 # dependencies
 #node_modules/
 
+node_modules/
+npm-debug.*
+
+# Secretos (Añade esta línea)
+.env
+
 # Expo
 .expo/
 dist/
