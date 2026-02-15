@@ -1,9 +1,39 @@
-import React, { createContext, useState, useContext } from 'react';
+import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
+import { supabase } from '../services/supabaseClient';
 
 const CartContext = createContext();
 
 export const CartProvider = ({ children }) => {
   const [cart, setCart] = useState([]);
+  const currentUserIdRef = useRef(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const initUser = async () => {
+      const {
+        data: { user }
+      } = await supabase.auth.getUser();
+
+      if (!mounted) return;
+      currentUserIdRef.current = user?.id || null;
+    };
+
+    initUser();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      const nextUserId = session?.user?.id || null;
+      if (currentUserIdRef.current !== nextUserId) {
+        setCart([]);
+        currentUserIdRef.current = nextUserId;
+      }
+    });
+
+    return () => {
+      mounted = false;
+      authListener?.subscription?.unsubscribe();
+    };
+  }, []);
 
   // Añadir o incrementar cantidad
   const addToCart = (product) => {

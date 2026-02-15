@@ -1,152 +1,152 @@
-import React, { useEffect, useState } from 'react';
-import { 
-  View, Text, TextInput, TouchableOpacity, StyleSheet, 
-  Image, KeyboardAvoidingView, Platform, ScrollView 
-} from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { supabase } from '../src/services/supabaseClient';
-import { COLORS, GLOBAL_STYLES } from '../src/constants/theme';
-import { Ionicons } from '@expo/vector-icons'; // Viene con Expo
+import React, { useEffect, useRef } from 'react';
+import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
+import { useRouter } from 'expo-router';
+import { COLORS } from '../src/constants/theme';
+import { Ionicons } from '@expo/vector-icons';
 
-const PRIMARY_LOGO = require('../assets/logo.png');
-const FALLBACK_LOGO = require('../assets/mainlogo.png');
+const LOGO = require('../assets/logo.png');
 
-export default function Login() {
+export default function IntroScreen() {
   const router = useRouter();
-  const { refresh } = useLocalSearchParams();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [useFallbackLogo, setUseFallbackLogo] = useState(false);
+  const logoScale = useRef(new Animated.Value(0.8)).current;
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+  const panelOpacity = useRef(new Animated.Value(0)).current;
+  const panelTranslate = useRef(new Animated.Value(16)).current;
 
   useEffect(() => {
-    setUseFallbackLogo(false);
-  }, [refresh]);
+    Animated.sequence([
+      Animated.parallel([
+        Animated.timing(logoOpacity, {
+          toValue: 1,
+          duration: 500,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true
+        }),
+        Animated.timing(logoScale, {
+          toValue: 1,
+          duration: 500,
+          easing: Easing.out(Easing.back(1.2)),
+          useNativeDriver: true
+        })
+      ]),
+      Animated.parallel([
+        Animated.timing(panelOpacity, {
+          toValue: 1,
+          duration: 420,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true
+        }),
+        Animated.timing(panelTranslate, {
+          toValue: 0,
+          duration: 420,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true
+        })
+      ])
+    ]).start();
 
-  const handleLogin = async () => {
-    // 1. Validar Dominio
-    if (!email.toLowerCase().endsWith('@pffsa.com')) {
-      alert('Acceso restringido: Debe usar su correo de @pffsa.com');
-      return;
-    }
+    const timer = setTimeout(() => {
+      router.replace('/login');
+    }, 2400);
 
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    
-    if (error) {
-      alert('Error: Credenciales inválidas');
-      setLoading(false);
-    } else {
-      router.replace('/(tabs)/clientes');
-    }
-  };
+    return () => clearTimeout(timer);
+  }, [logoOpacity, logoScale, panelOpacity, panelTranslate, router]);
 
   return (
-    <KeyboardAvoidingView 
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
-      style={styles.container}
-    >
-      <ScrollView key={String(refresh || 'default')} contentContainerStyle={styles.scrollContainer}>
-        
-        {/* Logo y Nombre de la App */}
-        <View style={styles.header}>
-          <Image 
-            source={useFallbackLogo ? FALLBACK_LOGO : PRIMARY_LOGO}
-            style={styles.logo} 
-            resizeMode="contain" 
-            onError={() => setUseFallbackLogo(true)}
-          />
-          <Text style={styles.appName}>Pedersen Connect</Text>
+    <View style={styles.container}>
+      <View style={styles.bgCirclePrimary} />
+      <View style={styles.bgCircleSecondary} />
+
+      <Animated.View
+        style={[
+          styles.logoWrap,
+          { opacity: logoOpacity, transform: [{ scale: logoScale }] }
+        ]}
+      >
+        <Image source={LOGO} style={styles.logo} contentFit="contain" />
+      </Animated.View>
+
+      <Animated.View
+        style={[
+          styles.futurePanel,
+          {
+            opacity: panelOpacity,
+            transform: [{ translateY: panelTranslate }]
+          }
+        ]}
+      >
+        <View style={styles.futureHeader}>
+          <Ionicons name="sparkles-outline" size={16} color={COLORS.primary} />
+          <Text style={styles.futureTitle}>Proxima validacion</Text>
         </View>
-
-        <View style={styles.form}>
-          <Text style={styles.label}>Correo Institucional</Text>
-          <TextInput
-            style={GLOBAL_STYLES.input}
-            placeholder="usuario@pffsa.com"
-            keyboardType="email-address"
-            autoCapitalize="none"
-            value={email}
-            onChangeText={setEmail}
-            returnKeyType="next"
-          />
-
-          <Text style={[styles.label, { marginTop: 15 }]}>Contraseña</Text>
-          <View style={styles.passwordContainer}>
-            <TextInput
-              style={styles.passwordInput}
-              placeholder="••••••••"
-              secureTextEntry={!showPassword}
-              value={password}
-              onChangeText={setPassword}
-            />
-            <TouchableOpacity 
-              onPress={() => setShowPassword(!showPassword)}
-              style={styles.eyeIcon}
-            >
-              <Ionicons 
-                name={showPassword ? "eye-off" : "eye"} 
-                size={22} 
-                color={COLORS.textLight} 
-              />
-            </TouchableOpacity>
-          </View>
-
-          <TouchableOpacity 
-            style={[GLOBAL_STYLES.buttonPrimary, { marginTop: 30 }]} 
-            onPress={handleLogin}
-            disabled={loading}
-          >
-            <Text style={styles.buttonText}>
-              {loading ? 'ACCEDIENDO...' : 'ENTRAR'}
-            </Text>
-          </TouchableOpacity>
-
-        </View>
-
-        {/* Footer con créditos */}
-        <View style={styles.footer}>
-          <Text style={styles.footerMain}>Desarrollado por el Dpto. de IT e Innovación</Text>
-          <Text style={styles.footerSub}>P.F.F.S.A. © 2026 | Versión 1.0.0</Text>
-        </View>
-
-      </ScrollView>
-    </KeyboardAvoidingView>
+        <Text style={styles.futureText}>
+          Espacio reservado para validaciones de precios y reglas comerciales.
+        </Text>
+      </Animated.View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.white },
-  scrollContainer: { flexGrow: 1, justifyContent: 'center', padding: 25 },
-  header: { alignItems: 'center', marginBottom: 40 },
-  logo: { width: 180, height: 80 },
-  appName: { 
-    fontSize: 24, 
-    fontWeight: 'bold', 
-    color: COLORS.primary, 
-    marginTop: 10,
-    letterSpacing: 1
-  },
-  form: { width: '100%' },
-  label: { color: COLORS.text, fontWeight: '600', marginBottom: 5, fontSize: 14 },
-  passwordContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 8,
-    backgroundColor: '#FFF',
-  },
-  passwordInput: {
+  container: {
     flex: 1,
-    padding: 12,
-    fontSize: 16,
-    color: COLORS.text,
+    backgroundColor: '#F6FAFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24
   },
-  eyeIcon: { padding: 10 },
-  buttonText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 },
-  footer: { marginTop: 50, alignItems: 'center' },
-  footerMain: { color: COLORS.textLight, fontSize: 12, fontWeight: 'bold' },
-  footerSub: { color: COLORS.textLight, fontSize: 10, marginTop: 4 }
+  bgCirclePrimary: {
+    position: 'absolute',
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: '#DCEBFF',
+    top: -70,
+    right: -70
+  },
+  bgCircleSecondary: {
+    position: 'absolute',
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    backgroundColor: '#EAF3FF',
+    bottom: -60,
+    left: -60
+  },
+  logoWrap: {
+    width: 220,
+    height: 120,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  logo: {
+    width: 220,
+    height: 120
+  },
+  futurePanel: {
+    marginTop: 30,
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: '#E8EEF5'
+  },
+  futureHeader: { flexDirection: 'row', alignItems: 'center' },
+  futureTitle: {
+    marginLeft: 6,
+    color: COLORS.primary,
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  futureText: {
+    marginTop: 6,
+    color: COLORS.textLight,
+    fontSize: 12,
+    lineHeight: 17
+  }
 });
+

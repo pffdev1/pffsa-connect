@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { 
-  View, Text, FlatList, StyleSheet, TextInput, 
+  View, Text, StyleSheet, TextInput, 
   TouchableOpacity, ActivityIndicator, SafeAreaView 
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { supabase } from '../../src/services/supabaseClient';
 import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
 import { useCart } from '../../src/context/CartContext';
+import ProductGrid from '../../src/components/ProductGrid';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function Catalogo() {
@@ -14,7 +15,7 @@ export default function Catalogo() {
   const router = useRouter();
   const { addToCart, cart } = useCart();
   
-  const [items, setItems] = useState([]);
+  const [items, setItems] = useState(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
@@ -77,11 +78,13 @@ export default function Catalogo() {
 
       {/* Banner Informativo del Cliente Seleccionado */}
       <View style={styles.clientInfoBanner}>
-        <Ionicons name="person" size={16} color="#FFF" />
-        <Text style={styles.clientNameText} numberOfLines={1}>
-          {cardName || 'Cliente Seleccionado'}
-        </Text>
-        <Text style={styles.clientCodeText}>({cardCode})</Text>
+        <Ionicons name="person" size={16} color="#FFF" style={styles.clientIcon} />
+        <View style={styles.clientTextWrap}>
+          <Text style={styles.clientNameText} numberOfLines={2}>
+            {cardName || 'Cliente Seleccionado'}
+          </Text>
+          <Text style={styles.clientCodeText}>{cardCode}</Text>
+        </View>
       </View>
 
       {/* Buscador con Placeholder de Ejemplo */}
@@ -98,38 +101,23 @@ export default function Catalogo() {
         </View>
       </View>
 
-      {loading ? (
+      {loading && items === null ? (
         <View style={{ flex: 1, justifyContent: 'center' }}>
           <ActivityIndicator size="large" color={COLORS.primary} />
           <Text style={{ textAlign: 'center', marginTop: 10, color: COLORS.textLight }}>Cargando inventario SAP...</Text>
         </View>
       ) : (
-        <FlatList 
-          data={items.filter(i => 
-            i.ItemName.toLowerCase().includes(search.toLowerCase()) ||
-            i.ItemCode.toLowerCase().includes(search.toLowerCase())
-          )}
-          keyExtractor={item => item.ItemCode}
-          contentContainerStyle={{ paddingBottom: 20 }}
-          renderItem={({item}) => (
-            <View style={[styles.productCard, GLOBAL_STYLES.shadow]}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemCode}>{item.ItemCode}</Text>
-                <Text style={styles.itemName}>{item.ItemName}</Text>
-                <Text style={styles.itemPrice}>${parseFloat(item.Price).toFixed(2)}</Text>
-              </View>
-              
-              <TouchableOpacity 
-                style={styles.btnAdd} 
-                onPress={() => addToCart({...item, CardCode: cardCode})}
-              >
-                <Ionicons name="add" size={26} color="#FFF" />
-              </TouchableOpacity>
-            </View>
-          )}
-          ListEmptyComponent={
-            <Text style={styles.emptyText}>No se encontraron productos.</Text>
+        <ProductGrid
+          data={
+            Array.isArray(items)
+              ? items.filter((i) =>
+                  i.ItemName.toLowerCase().includes(search.toLowerCase()) ||
+                  i.ItemCode.toLowerCase().includes(search.toLowerCase())
+                )
+              : null
           }
+          onAdd={(item) => addToCart({ ...item, CardCode: cardCode })}
+          emptyText="No se encontraron productos."
         />
       )}
     </SafeAreaView>
@@ -149,11 +137,18 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.secondary, 
     paddingVertical: 8, 
     paddingHorizontal: 15, 
-    alignItems: 'center',
-    justifyContent: 'center'
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start'
   },
-  clientNameText: { color: '#FFF', fontWeight: 'bold', fontSize: 13, marginLeft: 8, marginRight: 5 },
-  clientCodeText: { color: '#FFF', fontSize: 11, opacity: 0.9 },
+  clientIcon: { marginTop: 2 },
+  clientTextWrap: { marginLeft: 8, flex: 1 },
+  clientNameText: {
+    color: '#FFF',
+    fontWeight: 'bold',
+    fontSize: 13,
+    lineHeight: 17
+  },
+  clientCodeText: { color: '#FFF', fontSize: 11, opacity: 0.9, marginTop: 2 },
 
   // Buscador
   searchSection: { padding: 15, backgroundColor: COLORS.primary },
@@ -166,29 +161,6 @@ const styles = StyleSheet.create({
     height: 45
   },
   searchInput: { flex: 1, marginLeft: 10, fontSize: 15, color: COLORS.text },
-
-  // Tarjeta de Producto
-  productCard: { 
-    backgroundColor: '#FFF', 
-    marginHorizontal: 15, 
-    marginTop: 10, 
-    padding: 15, 
-    borderRadius: 12, 
-    flexDirection: 'row', 
-    alignItems: 'center' 
-  },
-  itemCode: { fontSize: 10, color: COLORS.textLight, marginBottom: 2 },
-  itemName: { fontSize: 15, fontWeight: 'bold', color: COLORS.primary, marginBottom: 4 },
-  itemPrice: { fontSize: 17, fontWeight: 'bold', color: COLORS.text },
-  btnAdd: { 
-    backgroundColor: COLORS.primary, 
-    width: 44, 
-    height: 44, 
-    borderRadius: 22, 
-    justifyContent: 'center', 
-    alignItems: 'center',
-    elevation: 3
-  },
 
   // Carrito Header & Badge
   cartBtnHeader: { marginRight: 15, padding: 5 },
@@ -206,5 +178,4 @@ const styles = StyleSheet.create({
     borderColor: COLORS.primary 
   },
   badgeText: { color: '#FFF', fontSize: 9, fontWeight: 'bold' },
-  emptyText: { textAlign: 'center', marginTop: 40, color: COLORS.textLight }
 });

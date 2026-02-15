@@ -3,7 +3,6 @@ import {
   Alert,
   View,
   Text,
-  FlatList,
   TouchableOpacity,
   StyleSheet,
   TextInput,
@@ -13,7 +12,9 @@ import {
 } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { supabase } from '../../src/services/supabaseClient';
+import { useCart } from '../../src/context/CartContext';
 import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
+import CustomerGrid from '../../src/components/CustomerGrid';
 import { Ionicons } from '@expo/vector-icons';
 
 const PAGE_SIZE = 50;
@@ -25,7 +26,7 @@ const normalizeSellerName = (value = '') =>
     .toUpperCase();
 
 export default function Clientes() {
-  const [clientes, setClientes] = useState([]);
+  const [clientes, setClientes] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -36,6 +37,7 @@ export default function Clientes() {
   const isMounted = useRef(true);
   const isLoadingMoreRef = useRef(false);
   const router = useRouter();
+  const { clearCart } = useCart();
 
   const handleLogout = async () => {
     Alert.alert('Cerrar sesion', 'Estas seguro de que deseas salir?', [
@@ -49,7 +51,8 @@ export default function Clientes() {
             Alert.alert('Error', 'No se pudo cerrar la sesion. Intenta nuevamente.');
             return;
           }
-          router.replace({ pathname: '/', params: { refresh: String(Date.now()) } });
+          clearCart();
+          router.replace({ pathname: '/login', params: { refresh: String(Date.now()) } });
         }
       }
     ]);
@@ -94,7 +97,7 @@ export default function Clientes() {
 
       if (!isMounted.current) return;
       setProfile(nextProfile);
-      setClientes([]);
+      setClientes(null);
       setHasMore(true);
       await fetchClientes(true, nextProfile);
     } catch (error) {
@@ -117,7 +120,7 @@ export default function Clientes() {
         isLoadingMoreRef.current = true;
         setLoadingMore(true);
       }
-      const from = reset ? 0 : clientes.length;
+      const from = reset ? 0 : (clientes?.length || 0);
       const to = from + PAGE_SIZE - 1;
 
       let query = supabase
@@ -138,7 +141,7 @@ export default function Clientes() {
       if (error) throw error;
       if (!isMounted.current) return;
       const nuevos = data || [];
-      setClientes((prev) => (reset ? nuevos : [...prev, ...nuevos]));
+      setClientes((prev) => (reset ? nuevos : [...(prev || []), ...nuevos]));
       setHasMore(nuevos.length === PAGE_SIZE);
     } catch (error) {
       console.error('Error cargando clientes:', error.message);
@@ -160,12 +163,12 @@ export default function Clientes() {
   };
 
   const handleLoadMore = () => {
-    if (loading || loadingMore || !hasMore || !profile) return;
+    if (loading || loadingMore || !hasMore || !profile || !Array.isArray(clientes)) return;
     fetchClientes(false);
   };
 
   // Logica de filtrado multicampo (Nombre, Comercial, Codigo y RUC)
-  const clientesFiltrados = clientes.filter((c) => {
+  const clientesFiltrados = Array.isArray(clientes) ? clientes.filter((c) => {
     const nivel = (c.Nivel || '').trim().toUpperCase();
     if (nivel === 'EMPLEADOS') return false;
 
@@ -181,32 +184,7 @@ export default function Clientes() {
       codigo.includes(s) ||
       ruc.includes(s)
     );
-  });
-
-  const renderCliente = ({ item }) => (
-    <View style={[styles.card, GLOBAL_STYLES.shadow]}>
-      <TouchableOpacity
-        style={{ flex: 1 }}
-        onPress={() =>
-          router.push({
-            pathname: '/catalogo',
-            params: {
-              cardCode: item.CardCode,
-              cardName: item.CardFName || item.CardName
-            }
-          })
-        }
-      >
-        <Text style={styles.cardCode}>{item.CardCode}</Text>
-        <Text style={styles.cardName}>{item.CardFName || item.CardName}</Text>
-        <Text style={styles.cardRuc}>RUC: {item.RUC} (DV {item.DV})</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity style={styles.infoButton} onPress={() => setSelectedClient(item)}>
-        <Ionicons name="information-circle-outline" size={28} color={COLORS.secondary} />
-      </TouchableOpacity>
-    </View>
-  );
+  }) : null;
 
   const balanceValue = Number(selectedClient?.Balance);
   const hasValidBalance = Number.isFinite(balanceValue);
@@ -236,6 +214,11 @@ export default function Clientes() {
             value={search}
             onChangeText={setSearch}
           />
+          {!!search && (
+            <TouchableOpacity style={styles.clearSearchButton} onPress={() => setSearch('')}>
+              <Ionicons name="close-circle" size={20} color={COLORS.textLight} />
+            </TouchableOpacity>
+          )}
         </View>
         {!!profile && (
           <TouchableOpacity style={styles.profileBanner} onPress={() => router.push('/perfil')}>
@@ -250,7 +233,7 @@ export default function Clientes() {
         )}
       </View>
 
-      {loading ? (
+      {loading && clientes === null ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.primary} />
           <Text style={{ marginTop: 10, color: COLORS.textLight }}>Sincronizando con SAP...</Text>
@@ -258,30 +241,22 @@ export default function Clientes() {
       ) : (
         <>
           {!!errorMsg && <Text style={styles.errorText}>{errorMsg}</Text>}
-          <FlatList
+          <CustomerGrid
             data={clientesFiltrados}
-            keyExtractor={(item, index) =>
-              `${item.CardCode || 'sin-codigo'}-${item.Nivel || 'sin-nivel'}-${item.CardName || item.CardFName || 'sin-nombre'}-${index}`
+            onPressCustomer={(item) =>
+              router.push({
+                pathname: '/catalogo',
+                params: {
+                  cardCode: item.CardCode,
+                  cardName: item.CardFName || item.CardName
+                }
+              })
             }
-            renderItem={renderCliente}
-            contentContainerStyle={{ paddingBottom: 100 }}
+            onPressInfo={(item) => setSelectedClient(item)}
             onEndReached={handleLoadMore}
-            onEndReachedThreshold={0.4}
-            ListFooterComponent={
-              loadingMore ? (
-                <View style={styles.footerLoader}>
-                  <ActivityIndicator size="small" color={COLORS.primary} />
-                  <Text style={styles.footerText}>Cargando mas clientes...</Text>
-                </View>
-              ) : !hasMore && clientesFiltrados.length > 0 ? (
-                <Text style={styles.footerText}>Has llegado al final</Text>
-              ) : null
-            }
-            ListEmptyComponent={
-              <Text style={styles.emptyText}>
-                {search ? `No se encontraron clientes para "${search}"` : 'No hay clientes disponibles'}
-              </Text>
-            }
+            loadingMore={loadingMore}
+            hasMore={hasMore}
+            emptyText={search ? `No se encontraron clientes para "${search}"` : 'No hay clientes disponibles'}
           />
         </>
       )}
@@ -304,6 +279,7 @@ export default function Clientes() {
                 <DetailRow label="RUC / DV" value={`${selectedClient.RUC} - ${selectedClient.DV}`} />
                 <DetailRow label="Vendedor" value={selectedClient.Vendedor} />
                 <DetailRow label="Ruta / Zona" value={`${selectedClient.Ruta} (${selectedClient.Zona})`} />
+                <DetailRow label="Dia de Entrega" value={selectedClient.DiasEntrega} />
                 <DetailRow
                   label="Balance Actual"
                   value={hasValidBalance ? `$${balanceValue.toFixed(2)}` : 'No disponible'}
@@ -379,19 +355,7 @@ const styles = StyleSheet.create({
     flexShrink: 1
   },
   searchInput: { flex: 1, marginLeft: 10, fontSize: 16, color: COLORS.text },
-  card: {
-    backgroundColor: '#FFF',
-    padding: 15,
-    marginHorizontal: 15,
-    marginTop: 10,
-    borderRadius: 12,
-    flexDirection: 'row',
-    alignItems: 'center'
-  },
-  cardCode: { fontSize: 11, color: COLORS.secondary, fontWeight: 'bold', marginBottom: 2 },
-  cardName: { fontSize: 15, fontWeight: 'bold', color: COLORS.primary },
-  cardRuc: { fontSize: 12, color: COLORS.textLight, marginTop: 2 },
-  infoButton: { padding: 5, marginLeft: 10 },
+  clearSearchButton: { marginLeft: 8, padding: 2 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
   modalContent: {
     backgroundColor: '#FFF',
@@ -407,9 +371,6 @@ const styles = StyleSheet.create({
   detailLabel: { fontSize: 10, color: COLORS.textLight, textTransform: 'uppercase', letterSpacing: 0.5 },
   detailValue: { fontSize: 14, fontWeight: '600', marginTop: 2 },
   errorText: { marginHorizontal: 15, marginTop: 12, color: '#E74C3C', fontSize: 13 },
-  emptyText: { textAlign: 'center', marginTop: 30, color: COLORS.textLight, fontSize: 15 },
-  footerLoader: { paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },
-  footerText: { color: COLORS.textLight, marginTop: 6, textAlign: 'center' },
   logoutButton: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4 },
   logoutText: { color: '#FFF', marginLeft: 4, fontWeight: '600' }
 });
