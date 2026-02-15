@@ -35,6 +35,13 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <Ionicons name="cart" size={26} color={color} />,
         }}
       />
+      <Tabs.Screen
+        name="perfil"
+        options={{
+          title: 'Mi Perfil',
+          href: null
+        }}
+      />
     </Tabs>
   );
 }

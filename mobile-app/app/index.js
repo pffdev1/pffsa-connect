@@ -102,6 +102,7 @@ export default function Login() {
               {loading ? 'ACCEDIENDO...' : 'ENTRAR'}
             </Text>
           </TouchableOpacity>
+
         </View>
 
         {/* Footer con créditos */}

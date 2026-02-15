@@ -9,14 +9,13 @@ export default function RootLayout() {
         screenOptions={{
           headerStyle: { backgroundColor: COLORS.primary },
           headerTintColor: '#FFF',
-          headerTitleStyle: { fontWeight: 'bold' },
+          headerTitleStyle: { fontWeight: 'bold' }
         }}
       >
-        {/* Ocultamos el header del login por defecto */}
         <Stack.Screen name="index" options={{ headerShown: false }} />
-        {/* El grupo (tabs) también maneja sus propios headers */}
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       </Stack>
     </CartProvider>
   );
 }
+

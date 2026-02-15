@@ -17,6 +17,12 @@ import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 
 const PAGE_SIZE = 50;
+const normalizeSellerName = (value = '') =>
+  value
+    .trim()
+    .replace(/[._-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
 
 export default function Clientes() {
   const [clientes, setClientes] = useState([]);
@@ -26,6 +32,7 @@ export default function Clientes() {
   const [errorMsg, setErrorMsg] = useState('');
   const [search, setSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState(null);
+  const [profile, setProfile] = useState(null);
   const isMounted = useRef(true);
   const isLoadingMoreRef = useRef(false);
   const router = useRouter();
@@ -50,15 +57,57 @@ export default function Clientes() {
 
   useEffect(() => {
     isMounted.current = true;
-    fetchClientes(true);
+    bootstrap();
     return () => {
       isMounted.current = false;
     };
   }, []);
 
-  const fetchClientes = async (reset = false) => {
+  const bootstrap = async () => {
+    try {
+      setLoading(true);
+      setErrorMsg('');
+      const {
+        data: { user },
+        error: userError
+      } = await supabase.auth.getUser();
+
+      if (userError) throw userError;
+      if (!user?.id) throw new Error('No hay sesion activa');
+
+      const { data: p, error: profileError } = await supabase
+        .from('profiles')
+        .select('full_name, role')
+        .eq('id', user.id)
+        .single();
+
+      if (profileError) throw profileError;
+
+      const nextProfile = {
+        fullName: (p?.full_name || '').trim(),
+        role: (p?.role || 'vendedor').trim().toLowerCase()
+      };
+
+      if (nextProfile.role !== 'admin' && !nextProfile.fullName) {
+        throw new Error('Perfil sin nombre de vendedor');
+      }
+
+      if (!isMounted.current) return;
+      setProfile(nextProfile);
+      setClientes([]);
+      setHasMore(true);
+      await fetchClientes(true, nextProfile);
+    } catch (error) {
+      if (!isMounted.current) return;
+      setLoading(false);
+      setErrorMsg('No se pudo cargar tu perfil. Contacta a IT.');
+    }
+  };
+
+  const fetchClientes = async (reset = false, currentProfile = profile) => {
     try {
       if (!isMounted.current) return;
+      if (!currentProfile) return;
       if (reset) {
         setLoading(true);
         setErrorMsg('');
@@ -71,8 +120,7 @@ export default function Clientes() {
       const from = reset ? 0 : clientes.length;
       const to = from + PAGE_SIZE - 1;
 
-      // Consulta a la tabla customers poblada desde n8n
-      const { data, error } = await supabase
+      let query = supabase
         .from('customers')
         .select('*')
         .not('Nivel', 'ilike', 'EMPLEADOS')
@@ -80,6 +128,12 @@ export default function Clientes() {
         .order('CardCode', { ascending: true })
         .order('Nivel', { ascending: true })
         .range(from, to);
+
+      if (currentProfile.role !== 'admin') {
+        query = query.eq('Vendedor', normalizeSellerName(currentProfile.fullName));
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
       if (!isMounted.current) return;
@@ -106,7 +160,7 @@ export default function Clientes() {
   };
 
   const handleLoadMore = () => {
-    if (loading || loadingMore || !hasMore) return;
+    if (loading || loadingMore || !hasMore || !profile) return;
     fetchClientes(false);
   };
 
@@ -183,6 +237,17 @@ export default function Clientes() {
             onChangeText={setSearch}
           />
         </View>
+        {!!profile && (
+          <TouchableOpacity style={styles.profileBanner} onPress={() => router.push('/perfil')}>
+            <Ionicons name="person-circle-outline" size={20} color="#FFF" />
+            <Text style={styles.profileRole}>
+              {profile.role === 'admin' ? 'Admin' : 'Vendedor'}
+            </Text>
+            <Text style={styles.profileName}>
+              {profile.fullName || 'Sin nombre'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {loading ? (
@@ -294,6 +359,24 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 12,
     height: 45
+  },
+  profileBanner: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  profileRole: {
+    marginLeft: 6,
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  profileName: {
+    marginLeft: 8,
+    color: '#DDE7F3',
+    fontSize: 12,
+    fontWeight: '600',
+    flexShrink: 1
   },
   searchInput: { flex: 1, marginLeft: 10, fontSize: 16, color: COLORS.text },
   card: {
