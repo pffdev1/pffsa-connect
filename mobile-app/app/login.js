@@ -18,6 +18,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [sendingReset, setSendingReset] = useState(false);
   const [useFallbackLogo, setUseFallbackLogo] = useState(false);
 
   useEffect(() => {
@@ -38,6 +39,29 @@ export default function Login() {
       setLoading(false);
     } else {
       router.replace('/(tabs)/clientes');
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    const userEmail = email.trim().toLowerCase();
+    if (!userEmail) {
+      alert('Ingresa tu correo para enviar el enlace de recuperacion.');
+      return;
+    }
+    if (!userEmail.endsWith('@pffsa.com')) {
+      alert('Solo se permite recuperacion con correos institucionales @pffsa.com.');
+      return;
+    }
+
+    try {
+      setSendingReset(true);
+      const { error } = await supabase.auth.resetPasswordForEmail(userEmail);
+      if (error) throw error;
+      alert('Te enviamos un enlace para restablecer tu contrasena. Se abrira en navegador segun la configuracion de Supabase.');
+    } catch (error) {
+      alert(error.message || 'No se pudo enviar el enlace de recuperacion.');
+    } finally {
+      setSendingReset(false);
     }
   };
 
@@ -99,6 +123,16 @@ export default function Login() {
               {loading ? 'ACCEDIENDO...' : 'ENTRAR'}
             </Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.forgotButton}
+            onPress={handleForgotPassword}
+            disabled={sendingReset}
+          >
+            <Text style={styles.forgotText}>
+              {sendingReset ? 'ENVIANDO ENLACE...' : '¿Has olvidado tu contrasena?'}
+            </Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.footer}>
@@ -140,8 +174,18 @@ const styles = StyleSheet.create({
   },
   eyeIcon: { padding: 10 },
   buttonText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 },
+  forgotButton: {
+    marginTop: 14,
+    alignSelf: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    borderRadius: 999,
+    backgroundColor: 'transparent'
+  },
+  forgotText: { color: COLORS.primary, fontSize: 13, fontWeight: '600' },
   footer: { marginTop: 50, alignItems: 'center' },
   footerMain: { color: COLORS.textLight, fontSize: 12, fontWeight: 'bold' },
   footerSub: { color: COLORS.textLight, fontSize: 10, marginTop: 4 }
 });
-
