@@ -20,6 +20,7 @@ const sanitizeSearchTerm = (value = '') =>
     .trim()
     .replace(/[%_,]/g, ' ')
     .replace(/\s+/g, ' ');
+// PriceSource priority: card-specific offer > list-level offer > base price.
 const PRICE_SOURCE_PRIORITY = {
   CARDCODE_OFFER: 3,
   LISTNUM_OFFER: 2,
