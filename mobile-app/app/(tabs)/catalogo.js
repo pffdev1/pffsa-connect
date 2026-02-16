@@ -186,6 +186,15 @@ export default function Catalogo() {
   }, [safeCardCode, debouncedSearch]);
 
   const cartCount = cart.reduce((acc, item) => acc + item.quantity, 0);
+  const handleAddToCart = useCallback(
+    (item, quantityToAdd = 1) => {
+      addToCart({ ...item, CardCode: safeCardCode, quantity: quantityToAdd });
+    },
+    [addToCart, safeCardCode]
+  );
+  const handleLoadMore = useCallback(() => {
+    fetchProductos({ reset: false, searchTerm: debouncedSearch });
+  }, [fetchProductos, debouncedSearch]);
   if (!safeCardCode) {
     return (
       <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
@@ -258,8 +267,8 @@ export default function Catalogo() {
 
       <ProductGrid
         data={isSearchLoading ? null : items}
-        onAdd={(item, quantityToAdd = 1) => addToCart({ ...item, CardCode: safeCardCode, quantity: quantityToAdd })}
-        onEndReached={() => fetchProductos({ reset: false, searchTerm: debouncedSearch })}
+        onAdd={handleAddToCart}
+        onEndReached={handleLoadMore}
         loadingMore={loadingMore}
         hasMore={hasMore}
         emptyText="No se encontraron productos."

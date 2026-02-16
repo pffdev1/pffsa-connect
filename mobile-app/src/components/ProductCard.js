@@ -8,7 +8,7 @@ import { COLORS, GLOBAL_STYLES } from '../constants/theme';
 const FALLBACK_PRODUCT =
   'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=1200&q=80';
 
-export default function ProductCard({ item, onAdd, loading = false }) {
+function ProductCard({ item, onAdd, loading = false }) {
   const rawImageUrl = item?.Url ?? item?.url ?? item?.image_url;
   const normalizedImageUrl =
     typeof rawImageUrl === 'string' && rawImageUrl.trim().length > 0
@@ -133,6 +133,26 @@ export default function ProductCard({ item, onAdd, loading = false }) {
     </MotiView>
   );
 }
+
+const areEqual = (prevProps, nextProps) => {
+  if (prevProps.loading !== nextProps.loading) return false;
+  if (prevProps.loading && nextProps.loading) return true;
+
+  const prev = prevProps.item || {};
+  const next = nextProps.item || {};
+
+  return (
+    prev.ItemCode === next.ItemCode &&
+    prev.ItemName === next.ItemName &&
+    prev.Price === next.Price &&
+    prev.UOM === next.UOM &&
+    prev.Url === next.Url &&
+    prev.url === next.url &&
+    prev.image_url === next.image_url
+  );
+};
+
+export default React.memo(ProductCard, areEqual);
 
 const styles = StyleSheet.create({
   card: { backgroundColor: '#FFF', borderRadius: 20, overflow: 'hidden', marginBottom: 12 },

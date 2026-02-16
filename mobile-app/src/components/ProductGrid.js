@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { FlatList, Text, useWindowDimensions, View, StyleSheet } from 'react-native';
 import ProductCard from './ProductCard';
 import { COLORS } from '../constants/theme';
@@ -20,6 +20,18 @@ export default function ProductGrid({
   const { width } = useWindowDimensions();
   const numColumns = getNumColumns(width);
   const skeletonCount = numColumns === 1 ? 2 : numColumns;
+  const keyExtractor = useCallback(
+    (item, index) => `${item.ItemCode || 'producto'}-${item.CardCode || 'na'}-${index}`,
+    []
+  );
+  const renderItem = useCallback(
+    ({ item }) => (
+      <View style={[styles.colWrap, numColumns > 1 ? { flex: 1 } : undefined]}>
+        <ProductCard item={item} onAdd={onAdd} />
+      </View>
+    ),
+    [numColumns, onAdd]
+  );
 
   if (data === null) {
     return (
@@ -38,14 +50,15 @@ export default function ProductGrid({
       data={data}
       key={numColumns}
       numColumns={numColumns}
-      keyExtractor={(item, index) => `${item.ItemCode || 'producto'}-${item.CardCode || 'na'}-${index}`}
+      keyExtractor={keyExtractor}
       columnWrapperStyle={numColumns > 1 ? { gap: 12, paddingHorizontal: 15 } : undefined}
       contentContainerStyle={[styles.listContent, numColumns === 1 ? { paddingHorizontal: 15 } : undefined]}
-      renderItem={({ item }) => (
-        <View style={[styles.colWrap, numColumns > 1 ? { flex: 1 } : undefined]}>
-          <ProductCard item={item} onAdd={onAdd} />
-        </View>
-      )}
+      renderItem={renderItem}
+      initialNumToRender={8}
+      maxToRenderPerBatch={8}
+      updateCellsBatchingPeriod={50}
+      windowSize={7}
+      removeClippedSubviews
       onEndReachedThreshold={0.35}
       onEndReached={onEndReached}
       ListFooterComponent={
