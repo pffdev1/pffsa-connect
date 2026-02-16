@@ -1,5 +1,6 @@
 import React from 'react';
 import { FlatList, Text, useWindowDimensions, View, StyleSheet } from 'react-native';
+import { ActivityIndicator } from 'react-native-paper';
 import ProductCard from './ProductCard';
 import { COLORS } from '../constants/theme';
 
@@ -9,7 +10,14 @@ const getNumColumns = (width) => {
   return 1;
 };
 
-export default function ProductGrid({ data, onAdd, emptyText = 'No se encontraron productos.' }) {
+export default function ProductGrid({
+  data,
+  onAdd,
+  emptyText = 'No se encontraron productos.',
+  onEndReached,
+  loadingMore = false,
+  hasMore = false
+}) {
   const { width } = useWindowDimensions();
   const numColumns = getNumColumns(width);
 
@@ -38,6 +46,18 @@ export default function ProductGrid({ data, onAdd, emptyText = 'No se encontraro
           <ProductCard item={item} onAdd={onAdd} />
         </View>
       )}
+      onEndReachedThreshold={0.35}
+      onEndReached={onEndReached}
+      ListFooterComponent={
+        loadingMore ? (
+          <View style={styles.footerLoader}>
+            <ActivityIndicator color={COLORS.primary} />
+            <Text style={styles.footerText}>Cargando mas productos...</Text>
+          </View>
+        ) : !hasMore && Array.isArray(data) && data.length > 0 ? (
+          <Text style={styles.footerText}>Llegaste al final del catalogo.</Text>
+        ) : null
+      }
       ListEmptyComponent={<Text style={styles.emptyText}>{emptyText}</Text>}
     />
   );
@@ -47,6 +67,8 @@ const styles = StyleSheet.create({
   listContent: { paddingBottom: 20, paddingTop: 10 },
   colWrap: { marginBottom: 0 },
   emptyText: { textAlign: 'center', marginTop: 40, color: COLORS.textLight },
+  footerLoader: { paddingVertical: 18, alignItems: 'center', justifyContent: 'center', gap: 8 },
+  footerText: { textAlign: 'center', color: COLORS.textLight, fontSize: 12, paddingVertical: 10 },
   gridWrap: { padding: 15 },
   rowWrap: { flexDirection: 'row', flexWrap: 'wrap' }
 });

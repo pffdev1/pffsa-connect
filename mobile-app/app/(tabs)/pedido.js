@@ -1,7 +1,11 @@
 import React from 'react';
-import { Alert, FlatList, SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Button, Card, IconButton } from 'react-native-paper';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { MotiView } from 'moti';
 import { useCart } from '../../src/context/CartContext';
 import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
 
@@ -47,16 +51,26 @@ export default function Pedido() {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
       <Stack.Screen options={{ title: 'Resumen de Pedido' }} />
 
       {cart.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>El carrito esta vacio</Text>
-          <Button mode="contained" buttonColor={COLORS.primary} style={styles.emptyButton} onPress={() => router.push('/catalogo')}>
-            Ir al Catalogo
-          </Button>
-        </View>
+        <LinearGradient colors={['#0A2952', '#0E3D75', '#1664A0']} style={styles.emptyWrap}>
+          <MotiView from={{ opacity: 0, translateY: 14 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 360 }}>
+            <Card style={styles.emptyCard}>
+              <Card.Content style={styles.emptyContainer}>
+                <View style={styles.emptyIcon}>
+                  <Ionicons name="cart-outline" size={30} color={COLORS.primary} />
+                </View>
+                <Text style={styles.emptyTitle}>Tu carrito esta vacio</Text>
+                <Text style={styles.emptyText}>Agrega productos del catalogo para crear un pedido y calcular el total automaticamente.</Text>
+                <Button mode="contained" buttonColor={COLORS.primary} style={styles.emptyButton} onPress={() => router.push('/catalogo')}>
+                  IR AL CATALOGO
+                </Button>
+              </Card.Content>
+            </Card>
+          </MotiView>
+        </LinearGradient>
       ) : (
         <>
           <FlatList data={cart} keyExtractor={(item) => item.ItemCode} renderItem={renderItem} contentContainerStyle={styles.listContent} />
@@ -115,7 +129,19 @@ const styles = StyleSheet.create({
   actionButtons: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
   btnCancel: { flex: 1 },
   btnConfirm: { flex: 2, borderRadius: 8 },
-  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
-  emptyText: { fontSize: 18, color: COLORS.textLight },
-  emptyButton: { marginTop: 20, borderRadius: 8 }
+  emptyWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+  emptyCard: { width: '100%', maxWidth: 520, borderRadius: 24, backgroundColor: '#FFF' },
+  emptyContainer: { alignItems: 'center', paddingVertical: 20 },
+  emptyIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#EAF1FA',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12
+  },
+  emptyTitle: { fontSize: 22, color: COLORS.primary, fontWeight: '800', textAlign: 'center' },
+  emptyText: { fontSize: 14, color: COLORS.textLight, marginTop: 10, textAlign: 'center', lineHeight: 21 },
+  emptyButton: { marginTop: 20, borderRadius: 10, width: '100%' }
 });
