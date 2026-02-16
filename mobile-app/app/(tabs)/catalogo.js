@@ -76,13 +76,16 @@ export default function Catalogo() {
   const [items, setItems] = useState(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [isSearchLoading, setIsSearchLoading] = useState(false);
   const [nextFrom, setNextFrom] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
+    setIsSearchLoading(true);
     const timeout = setTimeout(() => {
       setDebouncedSearch(sanitizeSearchTerm(search));
+      setIsSearchLoading(false);
     }, SEARCH_DEBOUNCE_MS);
 
     return () => clearTimeout(timeout);
@@ -183,7 +186,6 @@ export default function Catalogo() {
   }, [safeCardCode, debouncedSearch]);
 
   const cartCount = cart.reduce((acc, item) => acc + item.quantity, 0);
-
   if (!safeCardCode) {
     return (
       <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
@@ -255,7 +257,7 @@ export default function Catalogo() {
       </LinearGradient>
 
       <ProductGrid
-        data={items}
+        data={isSearchLoading ? null : items}
         onAdd={(item, quantityToAdd = 1) => addToCart({ ...item, CardCode: safeCardCode, quantity: quantityToAdd })}
         onEndReached={() => fetchProductos({ reset: false, searchTerm: debouncedSearch })}
         loadingMore={loadingMore}

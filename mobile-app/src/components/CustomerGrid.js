@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, FlatList, Text, useWindowDimensions, View, StyleSheet } from 'react-native';
+import { FlatList, Text, useWindowDimensions, View, StyleSheet } from 'react-native';
 import CustomerCard from './CustomerCard';
 import { COLORS } from '../constants/theme';
 
@@ -20,6 +20,7 @@ export default function CustomerGrid({
 }) {
   const { width } = useWindowDimensions();
   const numColumns = getNumColumns(width);
+  const skeletonCount = numColumns === 1 ? 2 : numColumns;
 
   if (data === null) {
     return (
@@ -50,9 +51,12 @@ export default function CustomerGrid({
       onEndReachedThreshold={0.4}
       ListFooterComponent={
         loadingMore ? (
-          <View style={styles.footerLoader}>
-            <ActivityIndicator size="small" color={COLORS.primary} />
-            <Text style={styles.footerText}>Cargando mas clientes...</Text>
+          <View style={[styles.gridWrap, styles.rowWrap, styles.footerSkeletonWrap]}>
+            {Array.from({ length: skeletonCount }).map((_, i) => (
+              <View key={`customer-more-skeleton-${i}`} style={[styles.colWrap, { width: `${100 / numColumns}%` }]}>
+                <CustomerCard loading />
+              </View>
+            ))}
           </View>
         ) : !hasMore && data.length > 0 ? (
           <Text style={styles.footerText}>Has llegado al final</Text>
@@ -66,7 +70,7 @@ export default function CustomerGrid({
 const styles = StyleSheet.create({
   listContent: { paddingBottom: 100, paddingTop: 10 },
   colWrap: { marginBottom: 0 },
-  footerLoader: { paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },
+  footerSkeletonWrap: { paddingTop: 4, paddingBottom: 8 },
   footerText: { color: COLORS.textLight, marginTop: 6, textAlign: 'center' },
   emptyText: { textAlign: 'center', marginTop: 30, color: COLORS.textLight, fontSize: 15 },
   gridWrap: { padding: 15 },
