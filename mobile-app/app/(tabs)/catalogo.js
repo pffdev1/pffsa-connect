@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
@@ -13,7 +13,57 @@ import ProductGrid from '../../src/components/ProductGrid';
 
 const MIN_SKELETON_MS = 650;
 const PAGE_SIZE = 80;
+const SEARCH_DEBOUNCE_MS = 260;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sanitizeSearchTerm = (value = '') =>
+  value
+    .trim()
+    .replace(/[%_,]/g, ' ')
+    .replace(/\s+/g, ' ');
+const PRICE_SOURCE_PRIORITY = {
+  CARDCODE_OFFER: 3,
+  LISTNUM_OFFER: 2,
+  BASE_PRICE: 1
+};
+
+const getPriceSourcePriority = (source) => PRICE_SOURCE_PRIORITY[String(source || '').trim()] || 0;
+const parsePrice = (value) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const normalizeCatalogRows = (rows = []) => {
+  const byItemCode = new Map();
+
+  rows.forEach((row) => {
+    const itemCode = String(row?.ItemCode || '').trim();
+    if (!itemCode) return;
+
+    const candidate = {
+      ...row,
+      ItemCode: itemCode,
+      Price: parsePrice(row?.Price)
+    };
+
+    const current = byItemCode.get(itemCode);
+    if (!current) {
+      byItemCode.set(itemCode, candidate);
+      return;
+    }
+
+    const currentPriority = getPriceSourcePriority(current.PriceSource);
+    const candidatePriority = getPriceSourcePriority(candidate.PriceSource);
+    const shouldReplace =
+      candidatePriority > currentPriority ||
+      (candidatePriority === currentPriority && candidate.Price > 0 && current.Price <= 0);
+
+    if (shouldReplace) {
+      byItemCode.set(itemCode, candidate);
+    }
+  });
+
+  return Array.from(byItemCode.values());
+};
 
 export default function Catalogo() {
   const { cardCode, cardName } = useLocalSearchParams();
@@ -24,17 +74,27 @@ export default function Catalogo() {
 
   const [items, setItems] = useState(null);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [nextFrom, setNextFrom] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
 
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setDebouncedSearch(sanitizeSearchTerm(search));
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => clearTimeout(timeout);
+  }, [search]);
+
   const fetchProductos = useCallback(
-    async ({ reset = false } = {}) => {
+    async ({ reset = false, searchTerm = debouncedSearch } = {}) => {
       if (!safeCardCode || (!reset && (!hasMore || loadingMore))) return;
 
       const startedAt = Date.now();
       const from = reset ? 0 : nextFrom;
       const to = from + PAGE_SIZE - 1;
+      const normalizedSearch = sanitizeSearchTerm(searchTerm);
 
       if (reset) {
         setItems(null);
@@ -43,33 +103,65 @@ export default function Catalogo() {
       }
 
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from('vw_catalogo_cliente')
           .select(
             `
               ItemCode,
               ItemName,
               Marca,
+              UOM,
               Price,
+              PriceSource,
               CardCode,
               Url
             `
           )
-          .eq('CardCode', safeCardCode)
-          .order('ItemCode', { ascending: true })
-          .range(from, to);
+          .eq('CardCode', safeCardCode);
+
+        if (normalizedSearch) {
+          const likeTerm = `%${normalizedSearch}%`;
+          query = query.or(`ItemName.ilike.${likeTerm},ItemCode.ilike.${likeTerm},Marca.ilike.${likeTerm}`);
+        }
+
+        query = query.order('ItemCode', { ascending: true }).range(from, to);
+
+        let { data, error } = await query;
+        if (error && String(error.message || '').toLowerCase().includes('pricesource')) {
+          query = supabase
+            .from('vw_catalogo_cliente')
+            .select(
+              `
+                ItemCode,
+                ItemName,
+                Marca,
+                UOM,
+                Price,
+                CardCode,
+                Url
+              `
+            )
+            .eq('CardCode', safeCardCode);
+          if (normalizedSearch) {
+            const likeTerm = `%${normalizedSearch}%`;
+            query = query.or(`ItemName.ilike.${likeTerm},ItemCode.ilike.${likeTerm},Marca.ilike.${likeTerm}`);
+          }
+          query = query.order('ItemCode', { ascending: true }).range(from, to);
+          ({ data, error } = await query);
+        }
 
         if (error) throw error;
 
-        const chunk = data || [];
+        const rawChunk = data || [];
+        const chunk = normalizeCatalogRows(rawChunk);
         const elapsed = Date.now() - startedAt;
         if (reset && elapsed < MIN_SKELETON_MS) {
           await wait(MIN_SKELETON_MS - elapsed);
         }
 
-        setItems((prev) => (reset ? chunk : [...(prev || []), ...chunk]));
-        setHasMore(chunk.length === PAGE_SIZE);
-        setNextFrom(from + chunk.length);
+        setItems((prev) => normalizeCatalogRows(reset ? chunk : [...(prev || []), ...chunk]));
+        setHasMore(rawChunk.length === PAGE_SIZE);
+        setNextFrom(from + rawChunk.length);
       } catch (error) {
         console.error('Error cargando productos:', error.message);
         if (reset) setItems([]);
@@ -77,32 +169,19 @@ export default function Catalogo() {
         setLoadingMore(false);
       }
     },
-    [safeCardCode, nextFrom, hasMore, loadingMore]
+    [safeCardCode, nextFrom, hasMore, loadingMore, debouncedSearch]
   );
 
   useEffect(() => {
     if (!safeCardCode) return;
     setNextFrom(0);
     setHasMore(true);
-    fetchProductos({ reset: true });
-    // `fetchProductos` depends on pagination state, this reset should only run when client changes.
+    fetchProductos({ reset: true, searchTerm: debouncedSearch });
+    // `fetchProductos` depends on pagination state; this reset must only run on client/search changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [safeCardCode]);
+  }, [safeCardCode, debouncedSearch]);
 
   const cartCount = cart.reduce((acc, item) => acc + item.quantity, 0);
-
-  const filteredItems = useMemo(() => {
-    if (!Array.isArray(items)) return items;
-    const q = search.trim().toLowerCase();
-    if (!q) return items;
-
-    return items.filter((i) => {
-      const name = String(i.ItemName || '').toLowerCase();
-      const code = String(i.ItemCode || '').toLowerCase();
-      const brand = String(i.Marca || '').toLowerCase();
-      return name.includes(q) || code.includes(q) || brand.includes(q);
-    });
-  }, [items, search]);
 
   if (!safeCardCode) {
     return (
@@ -175,9 +254,9 @@ export default function Catalogo() {
       </LinearGradient>
 
       <ProductGrid
-        data={filteredItems}
-        onAdd={(item) => addToCart({ ...item, CardCode: safeCardCode, quantity: 1 })}
-        onEndReached={() => fetchProductos({ reset: false })}
+        data={items}
+        onAdd={(item, quantityToAdd = 1) => addToCart({ ...item, CardCode: safeCardCode, quantity: quantityToAdd })}
+        onEndReached={() => fetchProductos({ reset: false, searchTerm: debouncedSearch })}
         loadingMore={loadingMore}
         hasMore={hasMore}
         emptyText="No se encontraron productos."

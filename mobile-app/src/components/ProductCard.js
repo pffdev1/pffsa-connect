@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Modal, Pressable } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Modal, Pressable, TextInput } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { MotiView } from 'moti';
@@ -16,10 +16,15 @@ export default function ProductCard({ item, onAdd, loading = false }) {
       : '';
   const [hasImageError, setHasImageError] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
+  const [qtyInput, setQtyInput] = useState('1');
 
   useEffect(() => {
     setHasImageError(false);
   }, [normalizedImageUrl]);
+
+  useEffect(() => {
+    setQtyInput('1');
+  }, [item?.ItemCode]);
 
   if (loading) {
     return (
@@ -45,6 +50,34 @@ export default function ProductCard({ item, onAdd, loading = false }) {
   }
 
   const imageUrl = !hasImageError && normalizedImageUrl ? normalizedImageUrl : FALLBACK_PRODUCT;
+  const uom = String(item?.UOM ?? item?.uom ?? '').trim().toUpperCase();
+  const priceText = `$${parseFloat(item.Price || 0).toFixed(2)}${uom ? ` / ${uom}` : ''}`;
+  const handleQtyChange = (value) => {
+    const rawValue = String(value || '').replace(',', '.');
+    const cleaned = rawValue.replace(/[^0-9.]/g, '');
+    const firstDot = cleaned.indexOf('.');
+    const normalizedValue =
+      firstDot === -1
+        ? cleaned
+        : `${cleaned.slice(0, firstDot + 1)}${cleaned.slice(firstDot + 1).replace(/\./g, '')}`;
+
+    if (!normalizedValue) {
+      setQtyInput('');
+      return;
+    }
+
+    // Limit to max 3 decimals for quantities like KG/LB.
+    const [intPart, decPart] = normalizedValue.split('.');
+    const safeIntPart = intPart ? String(Math.min(999, Number(intPart))) : '0';
+    const safeValue = decPart !== undefined ? `${safeIntPart}.${decPart.slice(0, 3)}` : safeIntPart;
+    setQtyInput(safeValue);
+  };
+  const handleAddPress = () => {
+    const parsedQty = Number(String(qtyInput || '').replace(',', '.'));
+    const normalizedQty = Number.isFinite(parsedQty) && parsedQty > 0 ? parsedQty : 1;
+    onAdd?.(item, normalizedQty);
+    setQtyInput('1');
+  };
 
   return (
     <MotiView from={{ opacity: 0, translateY: 12 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 260 }}>
@@ -69,10 +102,20 @@ export default function ProductCard({ item, onAdd, loading = false }) {
             {item.ItemName}
           </Text>
           <View style={styles.footer}>
-            <Text style={styles.price}>${parseFloat(item.Price || 0).toFixed(2)}</Text>
-            <TouchableOpacity style={styles.btnAdd} onPress={() => onAdd?.(item)}>
-              <Ionicons name="add" size={22} color="#FFF" />
-            </TouchableOpacity>
+            <Text style={styles.price}>{priceText}</Text>
+            <View style={styles.addControls}>
+              <TextInput
+                value={qtyInput}
+                onChangeText={handleQtyChange}
+                placeholder="1"
+                keyboardType="decimal-pad"
+                maxLength={8}
+                style={styles.qtyInput}
+              />
+              <TouchableOpacity style={styles.btnAdd} onPress={handleAddPress}>
+                <Ionicons name="add" size={18} color="#FFF" />
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </View>
@@ -112,11 +155,24 @@ const styles = StyleSheet.create({
   name: { fontSize: 15, fontWeight: '700', color: COLORS.primary, minHeight: 40 },
   footer: { marginTop: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   price: { fontSize: 17, fontWeight: '700', color: COLORS.text },
+  addControls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  qtyInput: {
+    width: 68,
+    height: 38,
+    borderWidth: 1,
+    borderColor: '#D6DFEA',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    textAlign: 'center',
+    fontSize: 16,
+    color: COLORS.text,
+    backgroundColor: '#FFF'
+  },
   btnAdd: {
     backgroundColor: COLORS.primary,
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     justifyContent: 'center',
     alignItems: 'center'
   },

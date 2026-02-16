@@ -1,5 +1,5 @@
-import React from 'react';
-import { Alert, FlatList, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Alert, FlatList, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Button, Card, IconButton } from 'react-native-paper';
@@ -11,7 +11,53 @@ import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
 
 export default function Pedido() {
   const router = useRouter();
-  const { cart, addToCart, removeFromCart, clearCart, getTotal } = useCart();
+  const { cart, addToCart, removeFromCart, updateCartItemQuantity, clearCart, getTotal } = useCart();
+  const [quantityDrafts, setQuantityDrafts] = useState({});
+
+  const formatQuantity = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '1';
+    if (Number.isInteger(n)) return String(n);
+    return n.toFixed(3).replace(/\.?0+$/, '');
+  };
+
+  const sanitizeQuantityInput = (value) => {
+    const raw = String(value || '').replace(',', '.');
+    const cleaned = raw.replace(/[^0-9.]/g, '');
+    const firstDot = cleaned.indexOf('.');
+    const normalized =
+      firstDot === -1 ? cleaned : `${cleaned.slice(0, firstDot + 1)}${cleaned.slice(firstDot + 1).replace(/\./g, '')}`;
+
+    if (!normalized) return '';
+
+    const [intPart, decPart] = normalized.split('.');
+    const safeInt = intPart ? String(Math.min(999, Number(intPart))) : '0';
+    return decPart !== undefined ? `${safeInt}.${decPart.slice(0, 3)}` : safeInt;
+  };
+
+  useEffect(() => {
+    setQuantityDrafts((prev) => {
+      const next = {};
+      cart.forEach((item) => {
+        next[item.ItemCode] = prev[item.ItemCode] ?? formatQuantity(item.quantity);
+      });
+      return next;
+    });
+  }, [cart]);
+
+  const commitDraftQuantity = (itemCode, fallbackQuantity) => {
+    const raw = String(quantityDrafts[itemCode] ?? '').replace(',', '.');
+    const parsed = Number(raw);
+    const normalized = Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 1000) / 1000 : null;
+
+    if (normalized === null) {
+      setQuantityDrafts((prev) => ({ ...prev, [itemCode]: formatQuantity(fallbackQuantity) }));
+      return;
+    }
+
+    updateCartItemQuantity(itemCode, normalized);
+    setQuantityDrafts((prev) => ({ ...prev, [itemCode]: formatQuantity(normalized) }));
+  };
 
   const handleConfirmarPedido = () => {
     if (cart.length === 0) {
@@ -42,9 +88,37 @@ export default function Pedido() {
         </View>
 
         <View style={styles.quantityControls}>
-          <IconButton icon="minus" size={18} style={styles.iconBtn} onPress={() => removeFromCart(item.ItemCode)} />
-          <Text style={styles.quantityText}>{item.quantity}</Text>
-          <IconButton icon="plus" size={18} style={styles.iconBtn} onPress={() => addToCart(item)} />
+          <IconButton
+            icon="minus"
+            size={18}
+            style={styles.iconBtn}
+            onPress={() => {
+              removeFromCart(item.ItemCode);
+              setQuantityDrafts((prev) => ({ ...prev, [item.ItemCode]: formatQuantity(Math.max(0, item.quantity - 1)) }));
+            }}
+          />
+          <TextInput
+            value={quantityDrafts[item.ItemCode] ?? formatQuantity(item.quantity)}
+            onChangeText={(value) =>
+              setQuantityDrafts((prev) => ({
+                ...prev,
+                [item.ItemCode]: sanitizeQuantityInput(value)
+              }))
+            }
+            onBlur={() => commitDraftQuantity(item.ItemCode, item.quantity)}
+            keyboardType="decimal-pad"
+            style={styles.quantityInput}
+            maxLength={8}
+          />
+          <IconButton
+            icon="plus"
+            size={18}
+            style={styles.iconBtn}
+            onPress={() => {
+              addToCart({ ...item, quantity: 1 });
+              setQuantityDrafts((prev) => ({ ...prev, [item.ItemCode]: formatQuantity(item.quantity + 1) }));
+            }}
+          />
         </View>
       </Card.Content>
     </Card>
@@ -119,9 +193,31 @@ const styles = StyleSheet.create({
   itemName: { fontSize: 15, fontWeight: 'bold', color: COLORS.primary },
   itemPrice: { fontSize: 12, color: COLORS.textLight },
   itemSubtotal: { fontSize: 13, fontWeight: 'bold', color: COLORS.secondary, marginTop: 4 },
-  quantityControls: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0F2F5', borderRadius: 20, paddingHorizontal: 2 },
+  quantityControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F2F5',
+    borderRadius: 20,
+    paddingHorizontal: 2
+  },
   iconBtn: { margin: 0 },
-  quantityText: { marginHorizontal: 10, fontWeight: 'bold', fontSize: 16 },
+  quantityInput: {
+    minWidth: 72,
+    height: 40,
+    marginHorizontal: 4,
+    borderWidth: 1,
+    borderColor: '#D6DFEA',
+    borderRadius: 10,
+    backgroundColor: '#FFF',
+    textAlign: 'center',
+    textAlignVertical: 'center',
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: '700',
+    color: COLORS.text,
+    paddingHorizontal: 8,
+    paddingVertical: 0
+  },
   footer: { backgroundColor: '#FFF', padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20, elevation: 10 },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
   totalLabel: { fontSize: 18, fontWeight: 'bold', color: COLORS.text },

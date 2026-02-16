@@ -13,7 +13,13 @@ import CustomerGrid from '../../src/components/CustomerGrid';
 
 const PAGE_SIZE = 50;
 const MIN_SKELETON_MS = 700;
+const SEARCH_DEBOUNCE_MS = 280;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sanitizeSearchTerm = (value = '') =>
+  value
+    .trim()
+    .replace(/[%_,]/g, ' ')
+    .replace(/\s+/g, ' ');
 const normalizeSellerName = (value = '') =>
   value
     .trim()
@@ -28,10 +34,12 @@ export default function Clientes() {
   const [hasMore, setHasMore] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState(null);
   const [profile, setProfile] = useState(null);
   const isMounted = useRef(true);
   const isLoadingMoreRef = useRef(false);
+  const hasInitializedSearchRef = useRef(false);
   const detailsSheetRef = useRef(null);
   const snapPoints = useMemo(() => ['83%'], []);
   const router = useRouter();
@@ -55,6 +63,14 @@ export default function Clientes() {
       }
     ]);
   };
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setDebouncedSearch(sanitizeSearchTerm(search));
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => clearTimeout(timeout);
+  }, [search]);
 
   useEffect(() => {
     isMounted.current = true;
@@ -132,7 +148,7 @@ export default function Clientes() {
     };
   }, []);
 
-  const fetchClientes = async (reset = false, currentProfile = profile) => {
+  const fetchClientes = async (reset = false, currentProfile = profile, searchTerm = debouncedSearch) => {
     const startedAt = Date.now();
 
     try {
@@ -149,6 +165,7 @@ export default function Clientes() {
 
       const from = reset ? 0 : clientes?.length || 0;
       const to = from + PAGE_SIZE - 1;
+      const normalizedSearch = sanitizeSearchTerm(searchTerm);
 
       let query = supabase
         .from('customers')
@@ -161,6 +178,12 @@ export default function Clientes() {
 
       if (currentProfile.role !== 'admin') {
         query = query.eq('Vendedor', normalizeSellerName(currentProfile.fullName));
+      }
+      if (normalizedSearch) {
+        const likeTerm = `%${normalizedSearch}%`;
+        query = query.or(
+          `CardName.ilike.${likeTerm},CardFName.ilike.${likeTerm},CardCode.ilike.${likeTerm},RUC.ilike.${likeTerm}`
+        );
       }
 
       const { data, error } = await query;
@@ -195,9 +218,22 @@ export default function Clientes() {
     }
   };
 
+  useEffect(() => {
+    if (!profile) return;
+    if (!hasInitializedSearchRef.current) {
+      hasInitializedSearchRef.current = true;
+      return;
+    }
+
+    setHasMore(true);
+    fetchClientes(true, profile, debouncedSearch);
+    // `fetchClientes` depends on pagination/loading state; this reset should run only on profile/search changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch, profile]);
+
   const handleLoadMore = () => {
     if (loading || loadingMore || !hasMore || !profile || !Array.isArray(clientes)) return;
-    fetchClientes(false);
+    fetchClientes(false, profile, debouncedSearch);
   };
 
   const openClientInfo = (item) => {
@@ -208,21 +244,6 @@ export default function Clientes() {
   const closeClientInfo = () => {
     detailsSheetRef.current?.dismiss();
   };
-
-  const clientesFiltrados = Array.isArray(clientes)
-    ? clientes.filter((c) => {
-        const nivel = (c.Nivel || '').trim().toUpperCase();
-        if (nivel === 'EMPLEADOS') return false;
-
-        const s = search.toLowerCase();
-        const nombreLegal = (c.CardName || '').toLowerCase();
-        const nombreComercial = (c.CardFName || '').toLowerCase();
-        const codigo = (c.CardCode || '').toLowerCase();
-        const ruc = (c.RUC || '').toLowerCase();
-
-        return nombreLegal.includes(s) || nombreComercial.includes(s) || codigo.includes(s) || ruc.includes(s);
-      })
-    : null;
 
   const balanceValue = Number(selectedClient?.Balance);
   const hasValidBalance = Number.isFinite(balanceValue);
@@ -273,7 +294,7 @@ export default function Clientes() {
 
       {!!errorMsg && <Text style={styles.errorText}>{errorMsg}</Text>}
       <CustomerGrid
-        data={clientesFiltrados}
+        data={clientes}
         onPressCustomer={(item) =>
           router.push({
             pathname: '/catalogo',
