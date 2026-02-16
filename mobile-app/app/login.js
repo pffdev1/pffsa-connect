@@ -1,38 +1,54 @@
 import React, { useEffect, useState } from 'react';
-import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  Image, KeyboardAvoidingView, Platform, ScrollView
-} from 'react-native';
+import { View, Text, StyleSheet, Image, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Button, HelperText, TextInput } from 'react-native-paper';
+import { Controller, useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
 import { supabase } from '../src/services/supabaseClient';
-import { COLORS, GLOBAL_STYLES } from '../src/constants/theme';
-import { Ionicons } from '@expo/vector-icons';
+import { COLORS } from '../src/constants/theme';
 
 const PRIMARY_LOGO = require('../assets/logo.png');
 const FALLBACK_LOGO = require('../assets/mainlogo.png');
 
+const loginSchema = z.object({
+  email: z
+    .string()
+    .trim()
+    .min(1, 'El correo es obligatorio.')
+    .email('Ingresa un correo valido.')
+    .refine((value) => value.toLowerCase().endsWith('@pffsa.com'), {
+      message: 'Debes usar un correo @pffsa.com.'
+    }),
+  password: z.string().min(1, 'La contrasena es obligatoria.')
+});
+
 export default function Login() {
   const router = useRouter();
   const { refresh } = useLocalSearchParams();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sendingReset, setSendingReset] = useState(false);
   const [useFallbackLogo, setUseFallbackLogo] = useState(false);
+  const {
+    control,
+    handleSubmit,
+    getValues,
+    formState: { errors }
+  } = useForm({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { email: '', password: '' }
+  });
 
   useEffect(() => {
     setUseFallbackLogo(false);
   }, [refresh]);
 
-  const handleLogin = async () => {
-    if (!email.toLowerCase().endsWith('@pffsa.com')) {
-      alert('Acceso restringido: Debe usar su correo de @pffsa.com');
-      return;
-    }
+  const handleLogin = handleSubmit(async ({ email, password }) => {
+    const normalizedEmail = email.trim().toLowerCase();
 
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
 
     if (error) {
       alert('Error: Credenciales invalidas');
@@ -40,10 +56,10 @@ export default function Login() {
     } else {
       router.replace('/(tabs)/clientes');
     }
-  };
+  });
 
   const handleForgotPassword = async () => {
-    const userEmail = email.trim().toLowerCase();
+    const userEmail = getValues('email').trim().toLowerCase();
     if (!userEmail) {
       alert('Ingresa tu correo para enviar el enlace de recuperacion.');
       return;
@@ -66,10 +82,7 @@ export default function Login() {
   };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-    >
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}>
       <ScrollView key={String(refresh || 'default')} contentContainerStyle={styles.scrollContainer}>
         <View style={styles.header}>
           <Image
@@ -83,56 +96,92 @@ export default function Login() {
 
         <View style={styles.form}>
           <Text style={styles.label}>Correo Institucional</Text>
-          <TextInput
-            style={GLOBAL_STYLES.input}
-            placeholder="usuario@pffsa.com"
-            keyboardType="email-address"
-            autoCapitalize="none"
-            value={email}
-            onChangeText={setEmail}
-            returnKeyType="next"
-          />
-
-          <Text style={[styles.label, { marginTop: 15 }]}>Contrasena</Text>
-          <View style={styles.passwordContainer}>
-            <TextInput
-              style={styles.passwordInput}
-              placeholder="********"
-              secureTextEntry={!showPassword}
-              value={password}
-              onChangeText={setPassword}
-            />
-            <TouchableOpacity
-              onPress={() => setShowPassword(!showPassword)}
-              style={styles.eyeIcon}
-            >
-              <Ionicons
-                name={showPassword ? 'eye-off' : 'eye'}
-                size={22}
-                color={COLORS.textLight}
+          <Controller
+            control={control}
+            name="email"
+            render={({ field: { onChange, onBlur, value } }) => (
+              <TextInput
+                mode="outlined"
+                placeholder="usuario@pffsa.com"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                value={value}
+                onBlur={onBlur}
+                onChangeText={onChange}
+                returnKeyType="next"
+                error={Boolean(errors.email)}
+                outlineColor={COLORS.border}
+                activeOutlineColor={COLORS.primary}
+                textColor={COLORS.text}
+                placeholderTextColor={COLORS.textLight}
+                style={styles.paperInput}
+                contentStyle={styles.inputContent}
+                theme={{ colors: { surface: COLORS.white, background: COLORS.white } }}
               />
-            </TouchableOpacity>
-          </View>
+            )}
+          />
+          <HelperText type="error" visible={Boolean(errors.email)} style={styles.helperText}>
+            {errors.email?.message}
+          </HelperText>
 
-          <TouchableOpacity
-            style={[GLOBAL_STYLES.buttonPrimary, { marginTop: 30 }]}
+          <Text style={[styles.label, styles.passwordLabel]}>Contrasena</Text>
+          <Controller
+            control={control}
+            name="password"
+            render={({ field: { onChange, onBlur, value } }) => (
+              <TextInput
+                mode="outlined"
+                placeholder="********"
+                secureTextEntry={!showPassword}
+                value={value}
+                onBlur={onBlur}
+                onChangeText={onChange}
+                error={Boolean(errors.password)}
+                outlineColor={COLORS.border}
+                activeOutlineColor={COLORS.primary}
+                textColor={COLORS.text}
+                placeholderTextColor={COLORS.textLight}
+                style={styles.paperInput}
+                contentStyle={styles.inputContent}
+                theme={{ colors: { surface: COLORS.white, background: COLORS.white } }}
+                right={
+                  <TextInput.Icon
+                    icon={showPassword ? 'eye-off' : 'eye'}
+                    onPress={() => setShowPassword((prev) => !prev)}
+                  />
+                }
+              />
+            )}
+          />
+          <HelperText type="error" visible={Boolean(errors.password)} style={styles.helperText}>
+            {errors.password?.message}
+          </HelperText>
+
+          <Button
+            mode="contained"
             onPress={handleLogin}
+            loading={loading}
             disabled={loading}
+            buttonColor={COLORS.primary}
+            style={styles.loginButton}
+            contentStyle={styles.loginButtonContent}
+            labelStyle={styles.loginButtonLabel}
           >
-            <Text style={styles.buttonText}>
-              {loading ? 'ACCEDIENDO...' : 'ENTRAR'}
-            </Text>
-          </TouchableOpacity>
+            {loading ? 'ACCEDIENDO...' : 'ENTRAR'}
+          </Button>
 
-          <TouchableOpacity
-            style={styles.forgotButton}
+          <Button
+            mode="outlined"
             onPress={handleForgotPassword}
             disabled={sendingReset}
+            style={styles.forgotButton}
+            contentStyle={styles.forgotButtonContent}
+            labelStyle={styles.forgotText}
+            textColor={COLORS.primary}
           >
-            <Text style={styles.forgotText}>
-              {sendingReset ? 'ENVIANDO ENLACE...' : '¿Has olvidado tu contrasena?'}
-            </Text>
-          </TouchableOpacity>
+            {sendingReset ? 'ENVIANDO ENLACE...' : 'Has olvidado tu contrasena?'}
+          </Button>
         </View>
 
         <View style={styles.footer}>
@@ -158,32 +207,24 @@ const styles = StyleSheet.create({
   },
   form: { width: '100%' },
   label: { color: COLORS.text, fontWeight: '600', marginBottom: 5, fontSize: 14 },
-  passwordContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 8,
-    backgroundColor: '#FFF'
+  passwordLabel: { marginTop: 10 },
+  paperInput: { backgroundColor: COLORS.white },
+  inputContent: { fontSize: 16, color: COLORS.text },
+  helperText: { marginTop: 2, marginBottom: 0, paddingHorizontal: 0 },
+  loginButton: {
+    marginTop: 18,
+    borderRadius: 8
   },
-  passwordInput: {
-    flex: 1,
-    padding: 12,
-    fontSize: 16,
-    color: COLORS.text
-  },
-  eyeIcon: { padding: 10 },
-  buttonText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 },
+  loginButtonContent: { height: 48 },
+  loginButtonLabel: { color: '#FFF', fontWeight: 'bold', fontSize: 16, letterSpacing: 0.3 },
   forgotButton: {
     marginTop: 14,
     alignSelf: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: COLORS.primary,
-    borderRadius: 999,
-    backgroundColor: 'transparent'
+    borderRadius: 999
   },
+  forgotButtonContent: { paddingHorizontal: 6 },
   forgotText: { color: COLORS.primary, fontSize: 13, fontWeight: '600' },
   footer: { marginTop: 50, alignItems: 'center' },
   footerMain: { color: COLORS.textLight, fontSize: 12, fontWeight: 'bold' },

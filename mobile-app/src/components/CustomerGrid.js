@@ -3,17 +3,6 @@ import { ActivityIndicator, FlatList, Text, useWindowDimensions, View, StyleShee
 import CustomerCard from './CustomerCard';
 import { COLORS } from '../constants/theme';
 
-function CustomerSkeletonCard() {
-  return (
-    <View style={styles.skeletonCard}>
-      <View style={styles.skeletonLineLarge} />
-      <View style={styles.skeletonLine} />
-      <View style={styles.skeletonLine} />
-      <View style={styles.skeletonLineSmall} />
-    </View>
-  );
-}
-
 const getNumColumns = (width) => {
   if (width >= 1280) return 4;
   if (width >= 640) return 2;
@@ -37,7 +26,7 @@ export default function CustomerGrid({
       <View style={[styles.gridWrap, styles.rowWrap]}>
         {Array.from({ length: 8 }).map((_, i) => (
           <View key={`skeleton-${i}`} style={[styles.colWrap, { width: `${100 / numColumns}%` }]}>
-            <CustomerSkeletonCard />
+            <CustomerCard loading />
           </View>
         ))}
       </View>
@@ -81,23 +70,5 @@ const styles = StyleSheet.create({
   footerText: { color: COLORS.textLight, marginTop: 6, textAlign: 'center' },
   emptyText: { textAlign: 'center', marginTop: 30, color: COLORS.textLight, fontSize: 15 },
   gridWrap: { padding: 15 },
-  rowWrap: { flexDirection: 'row', flexWrap: 'wrap' },
-  skeletonCard: {
-    backgroundColor: '#FFF',
-    borderRadius: 20,
-    marginBottom: 12,
-    overflow: 'hidden',
-    marginHorizontal: 6
-  },
-  skeletonLineLarge: { height: 14, marginTop: 12, marginHorizontal: 12, backgroundColor: '#E8EDF2', borderRadius: 6 },
-  skeletonLine: { height: 12, marginTop: 8, marginHorizontal: 12, backgroundColor: '#E8EDF2', borderRadius: 6 },
-  skeletonLineSmall: {
-    height: 10,
-    marginTop: 8,
-    marginBottom: 12,
-    marginHorizontal: 12,
-    width: '55%',
-    backgroundColor: '#E8EDF2',
-    borderRadius: 6
-  }
+  rowWrap: { flexDirection: 'row', flexWrap: 'wrap' }
 });

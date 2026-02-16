@@ -1,9 +1,28 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, TextInput, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
+import { Controller, useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { ActivityIndicator, Button, Card, HelperText, TextInput } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../src/services/supabaseClient';
 import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
+
+const passwordSchema = z
+  .object({
+    newPassword: z.string().min(6, 'La contrasena debe tener al menos 6 caracteres.'),
+    confirmPassword: z.string().min(1, 'Debes confirmar la contrasena.')
+  })
+  .superRefine(({ newPassword, confirmPassword }, ctx) => {
+    if (newPassword !== confirmPassword) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Las contrasenas no coinciden.',
+        path: ['confirmPassword']
+      });
+    }
+  });
 
 const normalizeSellerName = (value = '') =>
   value
@@ -17,9 +36,18 @@ export default function Perfil() {
   const [fullName, setFullName] = useState('');
   const [role, setRole] = useState('vendedor');
   const [clientesCount, setClientesCount] = useState(0);
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [savingPassword, setSavingPassword] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const {
+    control,
+    handleSubmit,
+    reset,
+    formState: { errors }
+  } = useForm({
+    resolver: zodResolver(passwordSchema),
+    defaultValues: { newPassword: '', confirmPassword: '' }
+  });
 
   useEffect(() => {
     loadPerfil();
@@ -48,10 +76,7 @@ export default function Perfil() {
       setFullName(profileName);
       setRole(profileRole);
 
-      let countQuery = supabase
-        .from('customers')
-        .select('*', { count: 'exact', head: true })
-        .not('Nivel', 'ilike', 'EMPLEADOS');
+      let countQuery = supabase.from('customers').select('*', { count: 'exact', head: true }).not('Nivel', 'ilike', 'EMPLEADOS');
 
       if (profileRole !== 'admin') {
         countQuery = countQuery.eq('Vendedor', normalizeSellerName(profileName));
@@ -60,7 +85,7 @@ export default function Perfil() {
       const { count, error: countError } = await countQuery;
       if (countError) throw countError;
       setClientesCount(count || 0);
-    } catch (error) {
+    } catch (_error) {
       setFullName('No disponible');
       setRole('vendedor');
       setClientesCount(0);
@@ -69,37 +94,20 @@ export default function Perfil() {
     }
   };
 
-  const handleChangePassword = async () => {
-    const pwd = (newPassword || '').trim();
-    const pwd2 = (confirmPassword || '').trim();
-
-    if (!pwd || !pwd2) {
-      Alert.alert('Validacion', 'Debes completar ambos campos de contrasena.');
-      return;
-    }
-    if (pwd.length < 6) {
-      Alert.alert('Validacion', 'La contrasena debe tener al menos 6 caracteres.');
-      return;
-    }
-    if (pwd !== pwd2) {
-      Alert.alert('Validacion', 'Las contrasenas no coinciden.');
-      return;
-    }
-
+  const handleChangePassword = handleSubmit(async ({ newPassword }) => {
     try {
       setSavingPassword(true);
-      const { error } = await supabase.auth.updateUser({ password: pwd });
+      const { error } = await supabase.auth.updateUser({ password: newPassword.trim() });
       if (error) throw error;
 
-      setNewPassword('');
-      setConfirmPassword('');
-      Alert.alert('Exito', 'Contrasena actualizada correctamente.');
+      reset({ newPassword: '', confirmPassword: '' });
+      alert('Contrasena actualizada correctamente.');
     } catch (error) {
-      Alert.alert('Error', error.message || 'No se pudo actualizar la contrasena.');
+      alert(error.message || 'No se pudo actualizar la contrasena.');
     } finally {
       setSavingPassword(false);
     }
-  };
+  });
 
   return (
     <View style={styles.container}>
@@ -109,52 +117,92 @@ export default function Perfil() {
           <ActivityIndicator size="large" color={COLORS.primary} />
         </View>
       ) : (
-        <View style={[styles.card, GLOBAL_STYLES.shadow]}>
-          <View style={styles.header}>
-            <Ionicons name="person-circle" size={58} color={COLORS.primary} />
-            <Text style={styles.name}>{fullName || 'Sin nombre'}</Text>
-          </View>
+        <Card style={[styles.card, GLOBAL_STYLES.shadow]} mode="contained">
+          <Card.Content>
+            <View style={styles.header}>
+              <Ionicons name="person-circle" size={58} color={COLORS.primary} />
+              <Text style={styles.name}>{fullName || 'Sin nombre'}</Text>
+            </View>
 
-          <View style={styles.row}>
-            <Text style={styles.label}>Rol</Text>
-            <Text style={styles.value}>{role === 'admin' ? 'Admin' : 'Vendedor'}</Text>
-          </View>
-          <View style={styles.row}>
-            <Text style={styles.label}>Clientes Asignados</Text>
-            <Text style={styles.value}>{clientesCount}</Text>
-          </View>
+            <View style={styles.row}>
+              <Text style={styles.label}>Rol</Text>
+              <Text style={styles.value}>{role === 'admin' ? 'Admin' : 'Vendedor'}</Text>
+            </View>
+            <View style={styles.row}>
+              <Text style={styles.label}>Clientes Asignados</Text>
+              <Text style={styles.value}>{clientesCount}</Text>
+            </View>
 
-          <Text style={styles.sectionTitle}>Seguridad</Text>
-          <Text style={styles.inputLabel}>Nueva contrasena</Text>
-          <TextInput
-            style={GLOBAL_STYLES.input}
-            secureTextEntry
-            placeholder="Minimo 6 caracteres"
-            placeholderTextColor={COLORS.textLight}
-            value={newPassword}
-            onChangeText={setNewPassword}
-          />
-          <Text style={[styles.inputLabel, { marginTop: 10 }]}>Confirmar contrasena</Text>
-          <TextInput
-            style={GLOBAL_STYLES.input}
-            secureTextEntry
-            placeholder="Repite la contrasena"
-            placeholderTextColor={COLORS.textLight}
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-          />
-          <TouchableOpacity
-            style={[GLOBAL_STYLES.buttonPrimary, { marginTop: 14 }, savingPassword && styles.buttonDisabled]}
-            onPress={handleChangePassword}
-            disabled={savingPassword}
-          >
-            {savingPassword ? (
-              <ActivityIndicator color="#FFF" />
-            ) : (
-              <Text style={styles.buttonText}>ACTUALIZAR CONTRASENA</Text>
-            )}
-          </TouchableOpacity>
-        </View>
+            <Text style={styles.sectionTitle}>Seguridad</Text>
+            <Controller
+              control={control}
+              name="newPassword"
+              render={({ field: { onChange, onBlur, value } }) => (
+                <TextInput
+                  mode="outlined"
+                  label="Nueva contrasena"
+                  placeholder="Minimo 6 caracteres"
+                  secureTextEntry={!showPassword}
+                  value={value}
+                  onBlur={onBlur}
+                  onChangeText={onChange}
+                  error={Boolean(errors.newPassword)}
+                  outlineColor={COLORS.border}
+                  activeOutlineColor={COLORS.primary}
+                  textColor={COLORS.text}
+                  style={styles.paperInput}
+                  right={
+                    <TextInput.Icon icon={showPassword ? 'eye-off' : 'eye'} onPress={() => setShowPassword((prev) => !prev)} />
+                  }
+                />
+              )}
+            />
+            <HelperText type="error" visible={Boolean(errors.newPassword)} style={styles.helperText}>
+              {errors.newPassword?.message}
+            </HelperText>
+
+            <Controller
+              control={control}
+              name="confirmPassword"
+              render={({ field: { onChange, onBlur, value } }) => (
+                <TextInput
+                  mode="outlined"
+                  label="Confirmar contrasena"
+                  placeholder="Repite la contrasena"
+                  secureTextEntry={!showConfirmPassword}
+                  value={value}
+                  onBlur={onBlur}
+                  onChangeText={onChange}
+                  error={Boolean(errors.confirmPassword)}
+                  outlineColor={COLORS.border}
+                  activeOutlineColor={COLORS.primary}
+                  textColor={COLORS.text}
+                  style={styles.paperInput}
+                  right={
+                    <TextInput.Icon
+                      icon={showConfirmPassword ? 'eye-off' : 'eye'}
+                      onPress={() => setShowConfirmPassword((prev) => !prev)}
+                    />
+                  }
+                />
+              )}
+            />
+            <HelperText type="error" visible={Boolean(errors.confirmPassword)} style={styles.helperText}>
+              {errors.confirmPassword?.message}
+            </HelperText>
+
+            <Button
+              mode="contained"
+              buttonColor={COLORS.primary}
+              style={styles.submitButton}
+              loading={savingPassword}
+              disabled={savingPassword}
+              onPress={handleChangePassword}
+            >
+              ACTUALIZAR CONTRASENA
+            </Button>
+          </Card.Content>
+        </Card>
       )}
     </View>
   );
@@ -166,8 +214,7 @@ const styles = StyleSheet.create({
   card: {
     marginTop: 10,
     backgroundColor: '#FFF',
-    borderRadius: 14,
-    padding: 18
+    borderRadius: 14
   },
   header: { alignItems: 'center', marginBottom: 20 },
   name: { marginTop: 8, fontSize: 20, fontWeight: '700', color: COLORS.primary },
@@ -182,7 +229,7 @@ const styles = StyleSheet.create({
   label: { color: COLORS.textLight, fontSize: 13, fontWeight: '600' },
   value: { color: COLORS.text, fontSize: 15, fontWeight: '700' },
   sectionTitle: { marginTop: 12, marginBottom: 8, color: COLORS.primary, fontSize: 15, fontWeight: '700' },
-  inputLabel: { color: COLORS.textLight, fontSize: 12, marginBottom: 6, fontWeight: '600' },
-  buttonText: { color: '#FFF', fontWeight: '700', fontSize: 14 },
-  buttonDisabled: { opacity: 0.7 }
+  paperInput: { backgroundColor: COLORS.white },
+  helperText: { marginTop: 2, marginBottom: 0, paddingHorizontal: 0 },
+  submitButton: { marginTop: 12, borderRadius: 10 }
 });

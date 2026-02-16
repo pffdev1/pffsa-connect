@@ -2,12 +2,34 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import { Skeleton } from 'moti/skeleton';
 import { COLORS, GLOBAL_STYLES } from '../constants/theme';
 
 const FALLBACK_PRODUCT =
   'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=1200&q=80';
 
-export default function ProductCard({ item, onAdd }) {
+export default function ProductCard({ item, onAdd, loading = false }) {
+  if (loading) {
+    return (
+      <View style={[styles.card, GLOBAL_STYLES.shadow]}>
+        <View style={styles.skeletonImage}>
+          <Skeleton colorMode="light" width="100%" height="100%" radius="square" />
+        </View>
+        <View style={styles.content}>
+          <Skeleton colorMode="light" width="35%" height={10} radius={7} />
+          <View style={styles.skeletonSpacerMd} />
+          <Skeleton colorMode="light" width="78%" height={14} radius={8} />
+          <View style={styles.skeletonSpacerSm} />
+          <Skeleton colorMode="light" width="58%" height={14} radius={8} />
+          <View style={styles.footer}>
+            <Skeleton colorMode="light" width="32%" height={16} radius={8} />
+            <Skeleton colorMode="light" width={42} height={42} radius="round" />
+          </View>
+        </View>
+      </View>
+    );
+  }
+
   const imageUrl = item?.image_url || FALLBACK_PRODUCT;
 
   return (
@@ -44,6 +66,8 @@ const styles = StyleSheet.create({
     borderRadius: 21,
     justifyContent: 'center',
     alignItems: 'center'
-  }
+  },
+  skeletonImage: { width: '100%', aspectRatio: 16 / 9 },
+  skeletonSpacerMd: { height: 10 },
+  skeletonSpacerSm: { height: 8 }
 });
-

@@ -1,23 +1,17 @@
-import React, { useEffect, useRef, useState } from 'react';
-import {
-  Alert,
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  TextInput,
-  ActivityIndicator,
-  SafeAreaView,
-  Modal
-} from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, View, Text, TouchableOpacity, StyleSheet, SafeAreaView } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
+import { BottomSheetModal, BottomSheetView } from '@gorhom/bottom-sheet';
+import { Button, Searchbar } from 'react-native-paper';
+import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../src/services/supabaseClient';
 import { useCart } from '../../src/context/CartContext';
-import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
+import { COLORS } from '../../src/constants/theme';
 import CustomerGrid from '../../src/components/CustomerGrid';
-import { Ionicons } from '@expo/vector-icons';
 
 const PAGE_SIZE = 50;
+const MIN_SKELETON_MS = 700;
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const normalizeSellerName = (value = '') =>
   value
     .trim()
@@ -36,6 +30,8 @@ export default function Clientes() {
   const [profile, setProfile] = useState(null);
   const isMounted = useRef(true);
   const isLoadingMoreRef = useRef(false);
+  const detailsSheetRef = useRef(null);
+  const snapPoints = useMemo(() => ['83%'], []);
   const router = useRouter();
   const { clearCart } = useCart();
 
@@ -60,57 +56,85 @@ export default function Clientes() {
 
   useEffect(() => {
     isMounted.current = true;
-    bootstrap();
+    (async () => {
+      const startedAt = Date.now();
+      try {
+        setLoading(true);
+        setErrorMsg('');
+        const {
+          data: { user },
+          error: userError
+        } = await supabase.auth.getUser();
+
+        if (userError) throw userError;
+        if (!user?.id) throw new Error('No hay sesion activa');
+
+        const { data: p, error: profileError } = await supabase
+          .from('profiles')
+          .select('full_name, role')
+          .eq('id', user.id)
+          .single();
+
+        if (profileError) throw profileError;
+
+        const nextProfile = {
+          fullName: (p?.full_name || '').trim(),
+          role: (p?.role || 'vendedor').trim().toLowerCase()
+        };
+
+        if (nextProfile.role !== 'admin' && !nextProfile.fullName) {
+          throw new Error('Perfil sin nombre de vendedor');
+        }
+
+        if (!isMounted.current) return;
+        setProfile(nextProfile);
+        setClientes(null);
+        setHasMore(true);
+
+        let query = supabase
+          .from('customers')
+          .select('*')
+          .not('Nivel', 'ilike', 'EMPLEADOS')
+          .order('CardName', { ascending: true })
+          .order('CardCode', { ascending: true })
+          .order('Nivel', { ascending: true })
+          .range(0, PAGE_SIZE - 1);
+
+        if (nextProfile.role !== 'admin') {
+          query = query.eq('Vendedor', normalizeSellerName(nextProfile.fullName));
+        }
+
+        const { data, error } = await query;
+        if (error) throw error;
+
+        const elapsed = Date.now() - startedAt;
+        if (elapsed < MIN_SKELETON_MS) {
+          await wait(MIN_SKELETON_MS - elapsed);
+        }
+        if (!isMounted.current) return;
+
+        const nuevos = data || [];
+        setClientes(nuevos);
+        setHasMore(nuevos.length === PAGE_SIZE);
+      } catch (_error) {
+        if (!isMounted.current) return;
+        setErrorMsg('No se pudo cargar tu perfil. Contacta a IT.');
+      } finally {
+        if (isMounted.current) {
+          setLoading(false);
+        }
+      }
+    })();
     return () => {
       isMounted.current = false;
     };
   }, []);
 
-  const bootstrap = async () => {
-    try {
-      setLoading(true);
-      setErrorMsg('');
-      const {
-        data: { user },
-        error: userError
-      } = await supabase.auth.getUser();
-
-      if (userError) throw userError;
-      if (!user?.id) throw new Error('No hay sesion activa');
-
-      const { data: p, error: profileError } = await supabase
-        .from('profiles')
-        .select('full_name, role')
-        .eq('id', user.id)
-        .single();
-
-      if (profileError) throw profileError;
-
-      const nextProfile = {
-        fullName: (p?.full_name || '').trim(),
-        role: (p?.role || 'vendedor').trim().toLowerCase()
-      };
-
-      if (nextProfile.role !== 'admin' && !nextProfile.fullName) {
-        throw new Error('Perfil sin nombre de vendedor');
-      }
-
-      if (!isMounted.current) return;
-      setProfile(nextProfile);
-      setClientes(null);
-      setHasMore(true);
-      await fetchClientes(true, nextProfile);
-    } catch (error) {
-      if (!isMounted.current) return;
-      setLoading(false);
-      setErrorMsg('No se pudo cargar tu perfil. Contacta a IT.');
-    }
-  };
-
   const fetchClientes = async (reset = false, currentProfile = profile) => {
+    const startedAt = Date.now();
+
     try {
-      if (!isMounted.current) return;
-      if (!currentProfile) return;
+      if (!isMounted.current || !currentProfile) return;
       if (reset) {
         setLoading(true);
         setErrorMsg('');
@@ -120,7 +144,8 @@ export default function Clientes() {
         isLoadingMoreRef.current = true;
         setLoadingMore(true);
       }
-      const from = reset ? 0 : (clientes?.length || 0);
+
+      const from = reset ? 0 : clientes?.length || 0;
       const to = from + PAGE_SIZE - 1;
 
       let query = supabase
@@ -137,9 +162,17 @@ export default function Clientes() {
       }
 
       const { data, error } = await query;
-
       if (error) throw error;
       if (!isMounted.current) return;
+
+      if (reset) {
+        const elapsed = Date.now() - startedAt;
+        if (elapsed < MIN_SKELETON_MS) {
+          await wait(MIN_SKELETON_MS - elapsed);
+        }
+        if (!isMounted.current) return;
+      }
+
       const nuevos = data || [];
       setClientes((prev) => (reset ? nuevos : [...(prev || []), ...nuevos]));
       setHasMore(nuevos.length === PAGE_SIZE);
@@ -147,9 +180,7 @@ export default function Clientes() {
       console.error('Error cargando clientes:', error.message);
       if (!isMounted.current) return;
       setErrorMsg(
-        reset
-          ? 'No se pudo cargar la lista de clientes. Intenta nuevamente.'
-          : 'No se pudieron cargar mas clientes.'
+        reset ? 'No se pudo cargar la lista de clientes. Intenta nuevamente.' : 'No se pudieron cargar mas clientes.'
       );
     } finally {
       if (!isMounted.current) return;
@@ -167,24 +198,29 @@ export default function Clientes() {
     fetchClientes(false);
   };
 
-  // Logica de filtrado multicampo (Nombre, Comercial, Codigo y RUC)
-  const clientesFiltrados = Array.isArray(clientes) ? clientes.filter((c) => {
-    const nivel = (c.Nivel || '').trim().toUpperCase();
-    if (nivel === 'EMPLEADOS') return false;
+  const openClientInfo = (item) => {
+    setSelectedClient(item);
+    detailsSheetRef.current?.present();
+  };
 
-    const s = search.toLowerCase();
-    const nombreLegal = (c.CardName || '').toLowerCase();
-    const nombreComercial = (c.CardFName || '').toLowerCase();
-    const codigo = (c.CardCode || '').toLowerCase();
-    const ruc = (c.RUC || '').toLowerCase();
+  const closeClientInfo = () => {
+    detailsSheetRef.current?.dismiss();
+  };
 
-    return (
-      nombreLegal.includes(s) ||
-      nombreComercial.includes(s) ||
-      codigo.includes(s) ||
-      ruc.includes(s)
-    );
-  }) : null;
+  const clientesFiltrados = Array.isArray(clientes)
+    ? clientes.filter((c) => {
+        const nivel = (c.Nivel || '').trim().toUpperCase();
+        if (nivel === 'EMPLEADOS') return false;
+
+        const s = search.toLowerCase();
+        const nombreLegal = (c.CardName || '').toLowerCase();
+        const nombreComercial = (c.CardFName || '').toLowerCase();
+        const codigo = (c.CardCode || '').toLowerCase();
+        const ruc = (c.RUC || '').toLowerCase();
+
+        return nombreLegal.includes(s) || nombreComercial.includes(s) || codigo.includes(s) || ruc.includes(s);
+      })
+    : null;
 
   const balanceValue = Number(selectedClient?.Balance);
   const hasValidBalance = Number.isFinite(balanceValue);
@@ -195,128 +231,110 @@ export default function Clientes() {
         options={{
           title: 'Directorio de Clientes',
           headerRight: () => (
-            <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-              <Ionicons name="log-out-outline" size={18} color="#FFF" />
-              <Text style={styles.logoutText}>Salir</Text>
-            </TouchableOpacity>
+            <Button icon="logout" mode="text" textColor="#FFF" onPress={handleLogout} compact>
+              Salir
+            </Button>
           )
         }}
       />
 
-      {/* Buscador */}
       <View style={styles.searchContainer}>
-        <View style={styles.searchBar}>
-          <Ionicons name="search" size={20} color={COLORS.textLight} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Buscar por nombre, RUC o codigo..."
-            placeholderTextColor="#999"
-            value={search}
-            onChangeText={setSearch}
-          />
-          {!!search && (
-            <TouchableOpacity style={styles.clearSearchButton} onPress={() => setSearch('')}>
-              <Ionicons name="close-circle" size={20} color={COLORS.textLight} />
-            </TouchableOpacity>
-          )}
-        </View>
+        <Searchbar
+          placeholder="Buscar por nombre, RUC o codigo..."
+          value={search}
+          onChangeText={setSearch}
+          style={styles.searchBar}
+          inputStyle={styles.searchInput}
+          iconColor={COLORS.textLight}
+          placeholderTextColor="#999"
+        />
         {!!profile && (
           <TouchableOpacity style={styles.profileBanner} onPress={() => router.push('/perfil')}>
             <Ionicons name="person-circle-outline" size={20} color="#FFF" />
-            <Text style={styles.profileRole}>
-              {profile.role === 'admin' ? 'Admin' : 'Vendedor'}
-            </Text>
-            <Text style={styles.profileName}>
-              {profile.fullName || 'Sin nombre'}
-            </Text>
+            <Text style={styles.profileRole}>{profile.role === 'admin' ? 'Admin' : 'Vendedor'}</Text>
+            <Text style={styles.profileName}>{profile.fullName || 'Sin nombre'}</Text>
           </TouchableOpacity>
         )}
       </View>
 
-      {loading && clientes === null ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={{ marginTop: 10, color: COLORS.textLight }}>Sincronizando con SAP...</Text>
-        </View>
-      ) : (
-        <>
-          {!!errorMsg && <Text style={styles.errorText}>{errorMsg}</Text>}
-          <CustomerGrid
-            data={clientesFiltrados}
-            onPressCustomer={(item) =>
-              router.push({
-                pathname: '/catalogo',
-                params: {
-                  cardCode: item.CardCode,
-                  cardName: item.CardFName || item.CardName
-                }
-              })
+      {!!errorMsg && <Text style={styles.errorText}>{errorMsg}</Text>}
+      <CustomerGrid
+        data={clientesFiltrados}
+        onPressCustomer={(item) =>
+          router.push({
+            pathname: '/catalogo',
+            params: {
+              cardCode: item.CardCode,
+              cardName: item.CardFName || item.CardName
             }
-            onPressInfo={(item) => setSelectedClient(item)}
-            onEndReached={handleLoadMore}
-            loadingMore={loadingMore}
-            hasMore={hasMore}
-            emptyText={search ? `No se encontraron clientes para "${search}"` : 'No hay clientes disponibles'}
-          />
-        </>
-      )}
+          })
+        }
+        onPressInfo={openClientInfo}
+        onEndReached={handleLoadMore}
+        loadingMore={loadingMore}
+        hasMore={hasMore}
+        emptyText={search ? `No se encontraron clientes para "${search}"` : 'No hay clientes disponibles'}
+      />
 
-      {/* MODAL DE DETALLES */}
-      <Modal visible={!!selectedClient} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Ficha del Cliente</Text>
-              <TouchableOpacity onPress={() => setSelectedClient(null)}>
-                <Ionicons name="close-circle" size={32} color={COLORS.primary} />
-              </TouchableOpacity>
+      <BottomSheetModal
+        ref={detailsSheetRef}
+        index={0}
+        snapPoints={snapPoints}
+        onDismiss={() => setSelectedClient(null)}
+        backgroundStyle={styles.sheetBackground}
+        handleIndicatorStyle={styles.sheetHandle}
+      >
+        <BottomSheetView style={styles.sheetContent}>
+          <View style={styles.sheetHeader}>
+            <Text style={styles.sheetTitle}>Ficha del Cliente</Text>
+            <Ionicons name="information-circle-outline" size={24} color={COLORS.primary} />
+          </View>
+
+          {selectedClient && (
+            <View style={styles.sheetBody}>
+              <DetailRow label="Razon Social" value={selectedClient.CardName} />
+              <DetailRow label="Nombre Comercial" value={selectedClient.CardFName} />
+              <DetailRow label="RUC / DV" value={`${selectedClient.RUC} - ${selectedClient.DV}`} />
+              <DetailRow label="Vendedor" value={selectedClient.Vendedor} />
+              <DetailRow label="Ruta / Zona" value={`${selectedClient.Ruta} (${selectedClient.Zona})`} />
+              <DetailRow label="Dia de Entrega" value={selectedClient.DiasEntrega} />
+              <DetailRow
+                label="Balance Actual"
+                value={hasValidBalance ? `$${balanceValue.toFixed(2)}` : 'No disponible'}
+                color={hasValidBalance ? (balanceValue > 0 ? '#E74C3C' : '#27AE60') : COLORS.textLight}
+              />
+              <DetailRow label="Direccion de Entrega" value={selectedClient.Direccion} />
+              <DetailRow label="Horario de Atencion" value={selectedClient.Horario} />
             </View>
+          )}
 
-            {selectedClient && (
-              <View style={styles.modalBody}>
-                <DetailRow label="Razon Social" value={selectedClient.CardName} />
-                <DetailRow label="Nombre Comercial" value={selectedClient.CardFName} />
-                <DetailRow label="RUC / DV" value={`${selectedClient.RUC} - ${selectedClient.DV}`} />
-                <DetailRow label="Vendedor" value={selectedClient.Vendedor} />
-                <DetailRow label="Ruta / Zona" value={`${selectedClient.Ruta} (${selectedClient.Zona})`} />
-                <DetailRow label="Dia de Entrega" value={selectedClient.DiasEntrega} />
-                <DetailRow
-                  label="Balance Actual"
-                  value={hasValidBalance ? `$${balanceValue.toFixed(2)}` : 'No disponible'}
-                  color={
-                    hasValidBalance
-                      ? balanceValue > 0
-                        ? '#E74C3C'
-                        : '#27AE60'
-                      : COLORS.textLight
-                  }
-                />
-                <DetailRow label="Direccion de Entrega" value={selectedClient.Direccion} />
-                <DetailRow label="Horario de Atencion" value={selectedClient.Horario} />
-              </View>
-            )}
-
-            <TouchableOpacity
-              style={[GLOBAL_STYLES.buttonPrimary, { marginTop: 25 }]}
+          <View style={styles.sheetActions}>
+            <Button mode="outlined" style={styles.sheetActionButton} onPress={closeClientInfo}>
+              CERRAR
+            </Button>
+            <Button
+              mode="contained"
+              buttonColor={COLORS.primary}
+              style={styles.sheetActionButton}
               onPress={() => {
                 const c = selectedClient;
-                setSelectedClient(null);
+                closeClientInfo();
+                if (!c) return;
                 router.push({
                   pathname: '/catalogo',
                   params: { cardCode: c.CardCode, cardName: c.CardFName || c.CardName }
                 });
               }}
             >
-              <Text style={{ color: '#FFF', fontWeight: 'bold', fontSize: 16 }}>LEVANTAR PEDIDO</Text>
-            </TouchableOpacity>
+              LEVANTAR PEDIDO
+            </Button>
           </View>
-        </View>
-      </Modal>
+        </BottomSheetView>
+      </BottomSheetModal>
     </SafeAreaView>
   );
 }
 
-// Componente auxiliar para filas de detalle
 const DetailRow = ({ label, value, color = COLORS.text }) => (
   <View style={styles.detailRow}>
     <Text style={styles.detailLabel}>{label}</Text>
@@ -326,16 +344,13 @@ const DetailRow = ({ label, value, color = COLORS.text }) => (
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   searchContainer: { padding: 15, backgroundColor: COLORS.primary },
   searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: '#FFF',
     borderRadius: 10,
-    paddingHorizontal: 12,
     height: 45
   },
+  searchInput: { fontSize: 16, color: COLORS.text, minHeight: 0 },
   profileBanner: {
     marginTop: 10,
     flexDirection: 'row',
@@ -354,23 +369,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flexShrink: 1
   },
-  searchInput: { flex: 1, marginLeft: 10, fontSize: 16, color: COLORS.text },
-  clearSearchButton: { marginLeft: 8, padding: 2 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
-  modalContent: {
-    backgroundColor: '#FFF',
-    borderTopLeftRadius: 25,
-    borderTopRightRadius: 25,
-    padding: 25,
-    maxHeight: '85%'
-  },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  modalTitle: { fontSize: 22, fontWeight: 'bold', color: COLORS.primary },
-  modalBody: { gap: 12 },
+  errorText: { marginHorizontal: 15, marginTop: 12, color: '#E74C3C', fontSize: 13 },
+  sheetBackground: { backgroundColor: '#FFF' },
+  sheetHandle: { backgroundColor: '#CDD6E2' },
+  sheetContent: { paddingHorizontal: 18, paddingBottom: 24 },
+  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  sheetTitle: { fontSize: 22, fontWeight: '700', color: COLORS.primary },
+  sheetBody: { gap: 12 },
   detailRow: { borderBottomWidth: 1, borderBottomColor: '#F0F0F0', paddingBottom: 6 },
   detailLabel: { fontSize: 10, color: COLORS.textLight, textTransform: 'uppercase', letterSpacing: 0.5 },
   detailValue: { fontSize: 14, fontWeight: '600', marginTop: 2 },
-  errorText: { marginHorizontal: 15, marginTop: 12, color: '#E74C3C', fontSize: 13 },
-  logoutButton: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 4 },
-  logoutText: { color: '#FFF', marginLeft: 4, fontWeight: '600' }
+  sheetActions: { marginTop: 20, flexDirection: 'row', gap: 10 },
+  sheetActionButton: { flex: 1, borderRadius: 10 }
 });

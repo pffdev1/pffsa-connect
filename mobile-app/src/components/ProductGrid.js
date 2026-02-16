@@ -3,16 +3,6 @@ import { FlatList, Text, useWindowDimensions, View, StyleSheet } from 'react-nat
 import ProductCard from './ProductCard';
 import { COLORS } from '../constants/theme';
 
-function ProductSkeletonCard() {
-  return (
-    <View style={styles.skeletonCard}>
-      <View style={styles.skeletonImage} />
-      <View style={styles.skeletonLineLarge} />
-      <View style={styles.skeletonLine} />
-    </View>
-  );
-}
-
 const getNumColumns = (width) => {
   if (width >= 1280) return 4;
   if (width >= 640) return 2;
@@ -28,7 +18,7 @@ export default function ProductGrid({ data, onAdd, emptyText = 'No se encontraro
       <View style={[styles.gridWrap, styles.rowWrap]}>
         {Array.from({ length: 8 }).map((_, i) => (
           <View key={`product-skeleton-${i}`} style={[styles.colWrap, { width: `${100 / numColumns}%` }]}>
-            <ProductSkeletonCard />
+            <ProductCard loading />
           </View>
         ))}
       </View>
@@ -58,16 +48,5 @@ const styles = StyleSheet.create({
   colWrap: { marginBottom: 0 },
   emptyText: { textAlign: 'center', marginTop: 40, color: COLORS.textLight },
   gridWrap: { padding: 15 },
-  rowWrap: { flexDirection: 'row', flexWrap: 'wrap' },
-  skeletonCard: {
-    backgroundColor: '#FFF',
-    borderRadius: 20,
-    marginBottom: 12,
-    overflow: 'hidden',
-    marginHorizontal: 6,
-    paddingBottom: 12
-  },
-  skeletonImage: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#E8EDF2' },
-  skeletonLineLarge: { height: 14, marginTop: 12, marginHorizontal: 12, backgroundColor: '#E8EDF2', borderRadius: 6 },
-  skeletonLine: { height: 12, marginTop: 8, marginHorizontal: 12, backgroundColor: '#E8EDF2', borderRadius: 6 }
+  rowWrap: { flexDirection: 'row', flexWrap: 'wrap' }
 });

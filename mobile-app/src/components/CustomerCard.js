@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Skeleton } from 'moti/skeleton';
 import { COLORS, GLOBAL_STYLES } from '../constants/theme';
 
 const resolveName = (item) => item?.full_name || item?.CardFName || item?.CardName || 'Cliente sin nombre';
@@ -10,7 +11,27 @@ const resolveTipoCadena = (item) => item?.TipoCadena || 'No definida';
 const resolveRuta = (item) => item?.Ruta || 'Sin ruta';
 const isBlocked = (item) => String(item?.Bloqueado || '').trim().toUpperCase() === 'Y';
 
-export default function CustomerCard({ item, onPress, onInfoPress }) {
+export default function CustomerCard({ item, onPress, onInfoPress, loading = false }) {
+  if (loading) {
+    return (
+      <View style={[styles.cardWrap, styles.skeletonCard]}>
+        <Skeleton colorMode="light" width="72%" height={14} radius={8} />
+        <View style={styles.skeletonSpacerSm} />
+        <Skeleton colorMode="light" width="52%" height={12} radius={8} />
+        <View style={styles.skeletonSpacerSm} />
+        <Skeleton colorMode="light" width="52%" height={12} radius={8} />
+        <View style={styles.skeletonFooterRow}>
+          <Skeleton colorMode="light" width="38%" height={11} radius={8} />
+          <Skeleton colorMode="light" width={48} height={20} radius="round" />
+        </View>
+        <View style={styles.skeletonFooterRow}>
+          <Skeleton colorMode="light" width="48%" height={11} radius={8} />
+          <Skeleton colorMode="light" width={74} height={20} radius="round" />
+        </View>
+      </View>
+    );
+  }
+
   const name = resolveName(item);
   const ruta = resolveRuta(item);
   const subCategoria = resolveSubCategoria(item);
@@ -88,5 +109,8 @@ const styles = StyleSheet.create({
   active: { backgroundColor: '#E7F7ED' },
   blocked: { backgroundColor: '#FCEAEA' },
   statusText: { fontSize: 10, fontWeight: '700', color: '#3F4A5A' },
-  infoButton: { position: 'absolute', top: 8, right: 8, backgroundColor: '#FFFFFFCC', borderRadius: 16, padding: 2 }
+  infoButton: { position: 'absolute', top: 8, right: 8, backgroundColor: '#FFFFFFCC', borderRadius: 16, padding: 2 },
+  skeletonCard: { padding: 12 },
+  skeletonSpacerSm: { height: 8 },
+  skeletonFooterRow: { marginTop: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }
 });
