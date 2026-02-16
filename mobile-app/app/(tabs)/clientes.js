@@ -3,9 +3,9 @@ import { Alert, View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { BottomSheetModal, BottomSheetView } from '@gorhom/bottom-sheet';
-import { Avatar, Button, Chip, Searchbar, Surface } from 'react-native-paper';
+import { Avatar, Badge, Button, Chip, Divider, IconButton, Modal, Portal, Searchbar, Surface } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
-import { MotiView } from 'moti';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { supabase } from '../../src/services/supabaseClient';
 import { useCart } from '../../src/context/CartContext';
 import { COLORS } from '../../src/constants/theme';
@@ -26,6 +26,12 @@ const normalizeSellerName = (value = '') =>
     .replace(/[._-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .toUpperCase();
+const matchesSearchTerm = (item, normalizedTerm) => {
+  if (!normalizedTerm) return true;
+  return [item?.CardName, item?.CardCode, item?.CardFName, item?.RUC].some((value) =>
+    normalizeSellerName(String(value || '')).includes(normalizedTerm)
+  );
+};
 
 export default function Clientes() {
   const [clientes, setClientes] = useState(null);
@@ -37,11 +43,16 @@ export default function Clientes() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [unlockNotifications, setUnlockNotifications] = useState([]);
+  const [notificationsVisible, setNotificationsVisible] = useState(false);
+  const [realtimeStatus, setRealtimeStatus] = useState('CONNECTING');
   const isMounted = useRef(true);
+  const clientesRef = useRef([]);
   const isLoadingMoreRef = useRef(false);
   const hasInitializedSearchRef = useRef(false);
   const detailsSheetRef = useRef(null);
   const snapPoints = useMemo(() => ['83%'], []);
+  const unreadUnlockCount = useMemo(() => unlockNotifications.filter((item) => !item.read).length, [unlockNotifications]);
   const router = useRouter();
   const { clearCart } = useCart();
 
@@ -148,6 +159,61 @@ export default function Clientes() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!profile) return undefined;
+
+    const normalizedSeller = normalizeSellerName(profile.fullName);
+    const realtimeFilter =
+      profile.role === 'admin' || !normalizedSeller ? undefined : `Vendedor=eq.${normalizedSeller}`;
+
+    const channel = supabase
+      .channel(`customers-unlock-${profile.role}-${normalizedSeller || 'all'}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'customers',
+          ...(realtimeFilter ? { filter: realtimeFilter } : {})
+        },
+        (payload) => {
+          const cardCode = payload?.new?.CardCode;
+          const previousLocalItem = cardCode ? clientesRef.current.find((item) => item?.CardCode === cardCode) : null;
+          const oldBlocked = normalizeSellerName(String(payload?.old?.Bloqueado || previousLocalItem?.Bloqueado || ''));
+          const newBlocked = normalizeSellerName(String(payload?.new?.Bloqueado || ''));
+
+          if (oldBlocked === 'Y' && newBlocked === 'N') {
+            const customerName =
+              payload?.new?.CardFName || payload?.new?.CardName || payload?.new?.CardCode || 'Cliente sin nombre';
+            const notificationItem = {
+              id: `${payload?.new?.CardCode || 'cliente'}-${Date.now()}`,
+              customerName,
+              cardCode: payload?.new?.CardCode || '',
+              createdAt: new Date().toISOString(),
+              read: false
+            };
+            setUnlockNotifications((prev) => [notificationItem, ...prev].slice(0, 30));
+          }
+
+          if (!payload?.new?.CardCode) return;
+          setClientes((prev) => {
+            if (!Array.isArray(prev)) return prev;
+            return prev.map((item) => (item.CardCode === payload.new.CardCode ? { ...item, ...payload.new } : item));
+          });
+        }
+      )
+      .subscribe((status) => {
+        setRealtimeStatus(status);
+        if (status === 'CHANNEL_ERROR') {
+          console.error('Realtime customers channel error');
+        }
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [profile]);
+
   const fetchClientes = async (reset = false, currentProfile = profile, searchTerm = debouncedSearch) => {
     const startedAt = Date.now();
 
@@ -165,7 +231,8 @@ export default function Clientes() {
 
       const from = reset ? 0 : clientes?.length || 0;
       const to = from + PAGE_SIZE - 1;
-      const normalizedSearch = sanitizeSearchTerm(searchTerm);
+      const querySearch = sanitizeSearchTerm(searchTerm);
+      const normalizedSearch = normalizeSellerName(querySearch);
 
       let query = supabase
         .from('customers')
@@ -180,7 +247,7 @@ export default function Clientes() {
         query = query.eq('Vendedor', normalizeSellerName(currentProfile.fullName));
       }
       if (normalizedSearch) {
-        const likeTerm = `%${normalizedSearch}%`;
+        const likeTerm = `%${querySearch}%`;
         query = query.or(
           `CardName.ilike.${likeTerm},CardFName.ilike.${likeTerm},CardCode.ilike.${likeTerm},RUC.ilike.${likeTerm}`
         );
@@ -198,9 +265,10 @@ export default function Clientes() {
         if (!isMounted.current) return;
       }
 
-      const nuevos = data || [];
+      const fetchedRows = data || [];
+      const nuevos = fetchedRows.filter((item) => matchesSearchTerm(item, normalizedSearch));
       setClientes((prev) => (reset ? nuevos : [...(prev || []), ...nuevos]));
-      setHasMore(nuevos.length === PAGE_SIZE);
+      setHasMore(fetchedRows.length === PAGE_SIZE);
     } catch (error) {
       console.error('Error cargando clientes:', error.message);
       if (!isMounted.current) return;
@@ -219,6 +287,10 @@ export default function Clientes() {
   };
 
   useEffect(() => {
+    clientesRef.current = Array.isArray(clientes) ? clientes : [];
+  }, [clientes]);
+
+  useEffect(() => {
     if (!profile) return;
     if (!hasInitializedSearchRef.current) {
       hasInitializedSearchRef.current = true;
@@ -234,6 +306,15 @@ export default function Clientes() {
   const handleLoadMore = () => {
     if (loading || loadingMore || !hasMore || !profile || !Array.isArray(clientes)) return;
     fetchClientes(false, profile, debouncedSearch);
+  };
+
+  const openNotifications = () => {
+    setUnlockNotifications((prev) => prev.map((item) => ({ ...item, read: true })));
+    setNotificationsVisible(true);
+  };
+
+  const closeNotifications = () => {
+    setNotificationsVisible(false);
   };
 
   const openClientInfo = (item) => {
@@ -284,6 +365,40 @@ export default function Clientes() {
               <Chip compact style={styles.roleChip} textStyle={styles.roleChipText}>
                 {profile.role === 'admin' ? 'Admin' : 'Vendedor'}
               </Chip>
+              <View style={styles.realtimeRow}>
+                <View
+                  style={[
+                    styles.realtimeDot,
+                    realtimeStatus === 'SUBSCRIBED'
+                      ? styles.realtimeOk
+                      : realtimeStatus === 'CHANNEL_ERROR' || realtimeStatus === 'TIMED_OUT'
+                        ? styles.realtimeErr
+                        : styles.realtimePending
+                  ]}
+                />
+                <Text style={styles.realtimeText}>
+                  {realtimeStatus === 'SUBSCRIBED'
+                    ? 'Realtime conectado'
+                    : realtimeStatus === 'CHANNEL_ERROR' || realtimeStatus === 'TIMED_OUT'
+                      ? 'Realtime con error'
+                      : 'Conectando realtime...'}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.bellWrap}>
+              <IconButton
+                icon="bell-outline"
+                mode="contained-tonal"
+                size={20}
+                iconColor="#FFF"
+                containerColor="rgba(255,255,255,0.18)"
+                onPress={openNotifications}
+              />
+              {unreadUnlockCount > 0 && (
+                <Badge style={styles.bellBadge} size={18}>
+                  {unreadUnlockCount > 99 ? '99+' : unreadUnlockCount}
+                </Badge>
+              )}
             </View>
             <Button mode="text" compact textColor="#EAF4FF" onPress={() => router.push('/perfil')}>
               Perfil
@@ -326,7 +441,7 @@ export default function Clientes() {
           </View>
 
           {selectedClient && (
-            <MotiView from={{ opacity: 0, translateY: 12 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 280 }}>
+            <Animated.View entering={FadeInDown.duration(280).springify().damping(18)}>
               <Surface style={styles.sheetHero} elevation={1}>
                 <Avatar.Icon size={42} icon="domain" color="#FFF" style={styles.sheetAvatar} />
                 <View style={styles.sheetHeroText}>
@@ -353,7 +468,7 @@ export default function Clientes() {
                   color={hasValidBalance ? (balanceValue > 0 ? '#E74C3C' : '#27AE60') : COLORS.textLight}
                 />
               </View>
-            </MotiView>
+            </Animated.View>
           )}
 
           <View style={styles.sheetActions}>
@@ -379,6 +494,39 @@ export default function Clientes() {
           </View>
         </BottomSheetView>
       </BottomSheetModal>
+
+      <Portal>
+        <Modal visible={notificationsVisible} onDismiss={closeNotifications} contentContainerStyle={styles.notificationsModalWrap}>
+          <Surface style={styles.notificationsPanel} elevation={4}>
+            <View style={styles.notificationsPanelContent}>
+              <View style={styles.notificationsHeader}>
+                <Text style={styles.notificationsTitle}>Notificaciones</Text>
+                <Button compact onPress={closeNotifications}>
+                  Cerrar
+                </Button>
+              </View>
+              <Divider />
+              <View style={styles.notificationsBody}>
+                {unlockNotifications.length === 0 ? (
+                  <Text style={styles.notificationsEmpty}>Sin notificaciones</Text>
+                ) : (
+                  unlockNotifications.map((item) => (
+                    <View key={item.id} style={styles.notificationItem}>
+                      <View style={styles.notificationDot} />
+                      <View style={styles.notificationTextWrap}>
+                        <Text style={styles.notificationTitle}>{item.customerName}</Text>
+                        <Text style={styles.notificationSubtitle}>
+                          Cliente desbloqueado{item.cardCode ? ` (${item.cardCode})` : ''}
+                        </Text>
+                      </View>
+                    </View>
+                  ))
+                )}
+              </View>
+            </View>
+          </Surface>
+        </Modal>
+      </Portal>
     </SafeAreaView>
   );
 }
@@ -436,7 +584,103 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontWeight: '700'
   },
+  realtimeRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  realtimeDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6
+  },
+  realtimeOk: {
+    backgroundColor: '#2ECC71'
+  },
+  realtimeErr: {
+    backgroundColor: '#E74C3C'
+  },
+  realtimePending: {
+    backgroundColor: '#F1C40F'
+  },
+  realtimeText: {
+    fontSize: 10,
+    color: '#EAF4FF'
+  },
+  bellWrap: {
+    position: 'relative',
+    marginRight: 2
+  },
+  bellBadge: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    backgroundColor: '#E74C3C',
+    color: '#FFF'
+  },
   errorText: { marginHorizontal: 15, marginTop: 12, color: '#E74C3C', fontSize: 13 },
+  notificationsModalWrap: {
+    marginHorizontal: 15,
+    marginTop: 65
+  },
+  notificationsPanel: {
+    maxHeight: 360,
+    borderRadius: 14,
+    backgroundColor: '#FFF'
+  },
+  notificationsPanelContent: {
+    borderRadius: 14,
+    overflow: 'hidden'
+  },
+  notificationsHeader: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  notificationsTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.primary
+  },
+  notificationsBody: {
+    paddingHorizontal: 12,
+    paddingVertical: 8
+  },
+  notificationsEmpty: {
+    color: COLORS.textLight,
+    fontSize: 13
+  },
+  notificationItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEF2F7'
+  },
+  notificationDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginTop: 5,
+    marginRight: 8,
+    backgroundColor: COLORS.primary
+  },
+  notificationTextWrap: {
+    flex: 1
+  },
+  notificationTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.text
+  },
+  notificationSubtitle: {
+    marginTop: 2,
+    fontSize: 12,
+    color: COLORS.textLight
+  },
   sheetBackground: { backgroundColor: '#FFF' },
   sheetHandle: { backgroundColor: '#CDD6E2' },
   sheetContent: { paddingHorizontal: 18, paddingBottom: 24 },

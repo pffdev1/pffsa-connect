@@ -5,7 +5,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Badge, Button, Card, IconButton, Searchbar } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { MotiView } from 'moti';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { supabase } from '../../src/services/supabaseClient';
 import { COLORS } from '../../src/constants/theme';
 import { useCart } from '../../src/context/CartContext';
@@ -200,7 +200,7 @@ export default function Catalogo() {
       <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
         <Stack.Screen options={{ title: 'Catalogo' }} />
         <LinearGradient colors={['#0A2952', '#0E3D75', '#1664A0']} style={styles.emptyWrap}>
-          <MotiView from={{ opacity: 0, translateY: 16 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 400 }}>
+          <Animated.View entering={FadeInDown.duration(400).springify().damping(18)}>
             <Card style={styles.emptyCard}>
               <Card.Content style={styles.emptyCardContent}>
                 <View style={styles.emptyIcon}>
@@ -215,7 +215,7 @@ export default function Catalogo() {
                 </Button>
               </Card.Content>
             </Card>
-          </MotiView>
+          </Animated.View>
         </LinearGradient>
       </SafeAreaView>
     );

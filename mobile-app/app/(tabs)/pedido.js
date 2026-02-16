@@ -5,7 +5,7 @@ import { Stack, useRouter } from 'expo-router';
 import { Button, Card, IconButton } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { MotiView } from 'moti';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useCart } from '../../src/context/CartContext';
 import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
 
@@ -130,7 +130,7 @@ export default function Pedido() {
 
       {cart.length === 0 ? (
         <LinearGradient colors={['#0A2952', '#0E3D75', '#1664A0']} style={styles.emptyWrap}>
-          <MotiView from={{ opacity: 0, translateY: 14 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 360 }}>
+          <Animated.View entering={FadeInDown.duration(360).springify().damping(18)}>
             <Card style={styles.emptyCard}>
               <Card.Content style={styles.emptyContainer}>
                 <View style={styles.emptyIcon}>
@@ -143,7 +143,7 @@ export default function Pedido() {
                 </Button>
               </Card.Content>
             </Card>
-          </MotiView>
+          </Animated.View>
         </LinearGradient>
       ) : (
         <>

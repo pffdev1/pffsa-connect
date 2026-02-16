@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, Pressable, TextInput } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import { MotiView } from 'moti';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { COLORS, GLOBAL_STYLES } from '../constants/theme';
 
 const FALLBACK_PRODUCT =
@@ -28,7 +28,7 @@ function ProductCard({ item, onAdd, loading = false }) {
 
   if (loading) {
     return (
-      <MotiView from={{ opacity: 0.45 }} animate={{ opacity: 1 }} transition={{ type: 'timing', duration: 260 }}>
+      <Animated.View entering={FadeIn.duration(260)}>
         <View style={[styles.card, GLOBAL_STYLES.shadow]}>
         <View style={styles.skeletonImage}>
           <View style={styles.skeletonBlock} />
@@ -45,7 +45,7 @@ function ProductCard({ item, onAdd, loading = false }) {
           </View>
         </View>
         </View>
-      </MotiView>
+      </Animated.View>
     );
   }
 
@@ -80,7 +80,7 @@ function ProductCard({ item, onAdd, loading = false }) {
   };
 
   return (
-    <MotiView from={{ opacity: 0, translateY: 12 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 260 }}>
+    <Animated.View entering={FadeInDown.duration(260).springify().damping(18)}>
       <View style={[styles.card, GLOBAL_STYLES.shadow]}>
         <TouchableOpacity activeOpacity={0.92} onPress={() => setPreviewVisible(true)}>
           <Image
@@ -130,7 +130,7 @@ function ProductCard({ item, onAdd, loading = false }) {
           </View>
         </Pressable>
       </Modal>
-    </MotiView>
+    </Animated.View>
   );
 }
 
