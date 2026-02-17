@@ -1,12 +1,31 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Platform } from 'react-native';
+import { Platform, View, Text, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../../src/constants/theme';
+import { useCart } from '../../src/context/CartContext';
+
+function CartTabIcon({ color, count }) {
+  return (
+    <View style={styles.cartIconWrap}>
+      <Ionicons name="cart" size={26} color={color} />
+      {count > 0 && (
+        <View style={styles.cartBadge}>
+          <Text style={styles.cartBadgeText}>{count > 99 ? '99+' : count}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
+  const { cart } = useCart();
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 8 : 0);
+  const cartItemCount = cart.reduce((acc, item) => {
+    const qty = Number(item?.quantity);
+    return acc + (Number.isFinite(qty) ? qty : 0);
+  }, 0);
 
   return (
     <Tabs screenOptions={{
@@ -42,7 +61,7 @@ export default function TabLayout() {
         options={{
           title: 'Mi Pedido',
           tabBarLabel: 'Carrito',
-          tabBarIcon: ({ color }) => <Ionicons name="cart" size={26} color={color} />,
+          tabBarIcon: ({ color }) => <CartTabIcon color={color} count={cartItemCount} />,
         }}
       />
       <Tabs.Screen
@@ -55,3 +74,30 @@ export default function TabLayout() {
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  cartIconWrap: {
+    position: 'relative',
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  cartBadge: {
+    position: 'absolute',
+    top: -5,
+    right: -9,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 3,
+    backgroundColor: COLORS.secondary,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  cartBadgeText: {
+    color: '#FFF',
+    fontSize: 9,
+    fontWeight: '700'
+  }
+});

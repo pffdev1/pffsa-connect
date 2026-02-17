@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useCart } from '../../src/context/CartContext';
+import { supabase } from '../../src/services/supabaseClient';
 import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
 
 export default function Pedido() {
@@ -59,9 +60,31 @@ export default function Pedido() {
     setQuantityDrafts((prev) => ({ ...prev, [itemCode]: formatQuantity(normalized) }));
   };
 
-  const handleConfirmarPedido = () => {
+  const handleConfirmarPedido = async () => {
     if (cart.length === 0) {
       Alert.alert('Carrito Vacio', 'Debes agregar al menos un producto.');
+      return;
+    }
+
+    try {
+      const cardCodes = Array.from(new Set(cart.map((item) => String(item?.CardCode || '').trim()).filter(Boolean)));
+      if (cardCodes.length > 0) {
+        const { data, error } = await supabase
+          .from('customers')
+          .select('CardCode, CardName, CardFName, Bloqueado')
+          .in('CardCode', cardCodes);
+
+        if (error) throw error;
+
+        const blockedClient = (data || []).find((row) => String(row?.Bloqueado || '').trim().toUpperCase() === 'Y');
+        if (blockedClient) {
+          const blockedName = blockedClient.CardFName || blockedClient.CardName || blockedClient.CardCode;
+          Alert.alert('Cliente bloqueado', `No puedes confirmar el pedido. ${blockedName} esta bloqueado.`);
+          return;
+        }
+      }
+    } catch (_error) {
+      Alert.alert('Error', 'No se pudo validar el estado del cliente. Intenta nuevamente.');
       return;
     }
 

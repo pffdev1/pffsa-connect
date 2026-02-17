@@ -4,6 +4,20 @@
 -- 1) Necesario para recibir payload.old completo en postgres_changes (UPDATE/DELETE)
 ALTER TABLE public.customers REPLICA IDENTITY FULL;
 
+-- 1.1) Asegurar que customers este incluida en la publicacion de realtime
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime'
+      AND schemaname = 'public'
+      AND tablename = 'customers'
+  ) THEN
+    EXECUTE 'ALTER PUBLICATION supabase_realtime ADD TABLE public.customers';
+  END IF;
+END $$;
+
 -- 2) Funcion de normalizacion (alineada con normalizeSellerName del cliente)
 CREATE OR REPLACE FUNCTION public.normalize_seller_name(input text)
 RETURNS text
