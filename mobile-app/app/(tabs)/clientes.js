@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, View, Text, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { BottomSheetModal, BottomSheetView } from '@gorhom/bottom-sheet';
 import { Avatar, Badge, Button, Chip, Divider, IconButton, Modal, Portal, Searchbar, Surface } from 'react-native-paper';
@@ -29,9 +29,11 @@ const normalizeSellerName = (value = '') =>
     .replace(/\s+/g, ' ')
     .toUpperCase();
 const buildRealtimeEqFilter = (column, value = '') => {
-  const safeValue = String(value || '').trim().replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const safeValue = String(value || '').trim();
   if (!safeValue) return undefined;
-  return `${column}=eq."${safeValue}"`;
+  // Supabase Realtime expects PostgREST-style filters without quoted string literals.
+  // Encode spaces/special chars to avoid CHANNEL_ERROR parsing failures.
+  return `${column}=eq.${encodeURIComponent(safeValue)}`;
 };
 const buildChannelSellerToken = (value = '') => {
   const token = String(value || '')
@@ -49,6 +51,8 @@ const matchesSearchTerm = (item, normalizedTerm) => {
 const isClientBlocked = (item) => normalizeSellerName(String(item?.Bloqueado || '')) === 'Y';
 
 export default function Clientes() {
+  const insets = useSafeAreaInsets();
+  const sheetBottomInset = Math.max(insets.bottom, 12);
   const [clientes, setClientes] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -593,11 +597,12 @@ export default function Clientes() {
         ref={detailsSheetRef}
         index={0}
         snapPoints={snapPoints}
+        bottomInset={sheetBottomInset}
         onDismiss={() => setSelectedClient(null)}
         backgroundStyle={styles.sheetBackground}
         handleIndicatorStyle={styles.sheetHandle}
       >
-        <BottomSheetView style={styles.sheetContent}>
+        <BottomSheetView style={[styles.sheetContent, { paddingBottom: sheetBottomInset + 12 }]}>
           <View style={styles.sheetHeader}>
             <Text style={styles.sheetTitle}>Ficha del Cliente</Text>
             <Ionicons name="information-circle-outline" size={24} color={COLORS.primary} />

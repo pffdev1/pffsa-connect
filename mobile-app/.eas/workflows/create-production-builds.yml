@@ -7,9 +7,9 @@ jobs:
       EAS_NO_VCS: "1"
     params:
       platform: android
-  build_ios:
-    type: build # This job type creates a production build for iOS
-    env:
-      EAS_NO_VCS: "1"
-    params:
-      platform: ios
+#  build_ios:
+#    type: build # This job type creates a production build for iOS
+#    env:
+#      EAS_NO_VCS: "1"
+#    params:
+#      platform: ios

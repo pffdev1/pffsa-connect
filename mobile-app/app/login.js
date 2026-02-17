@@ -51,6 +51,24 @@ export default function Login() {
     setUseFallbackLogo(false);
   }, [refresh]);
 
+  useEffect(() => {
+    let mounted = true;
+
+    const restoreSession = async () => {
+      const {
+        data: { session }
+      } = await supabase.auth.getSession();
+      if (mounted && session?.user) {
+        router.replace('/(tabs)/clientes');
+      }
+    };
+
+    restoreSession();
+    return () => {
+      mounted = false;
+    };
+  }, [router]);
+
   const handleLogin = handleSubmit(async ({ email, password }) => {
     const normalizedEmail = email.trim().toLowerCase();
 
@@ -189,13 +207,13 @@ export default function Login() {
             labelStyle={styles.forgotText}
             textColor={COLORS.primary}
           >
-            {sendingReset ? 'ENVIANDO ENLACE...' : 'Has olvidado tu contrasena?'}
+            {sendingReset ? 'ENVIANDO ENLACE...' : '¿Has olvidado tu contrasena?'}
           </Button>
         </View>
 
         <View style={styles.footer}>
           <Text style={styles.footerMain}>Desarrollado por el Dpto. de IT e Innovacion</Text>
-          <Text style={styles.footerSub}>P.F.F.S.A. (c) 2026 | Version 1.0.0</Text>
+          <Text style={styles.footerSub}>Pedersen Fine Foods (c) 2026 | Version 1.0.0</Text>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>

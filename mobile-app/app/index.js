@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { COLORS } from '../src/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
+import { supabase } from '../src/services/supabaseClient';
 
 const LOGO = require('../assets/logo.png');
 
@@ -46,8 +47,15 @@ export default function IntroScreen() {
       ])
     ]).start();
 
-    const timer = setTimeout(() => {
-      router.replace('/login');
+    const timer = setTimeout(async () => {
+      try {
+        const {
+          data: { session }
+        } = await supabase.auth.getSession();
+        router.replace(session?.user ? '/(tabs)/clientes' : '/login');
+      } catch (_error) {
+        router.replace('/login');
+      }
     }, 2400);
 
     return () => clearTimeout(timer);
