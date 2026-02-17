@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import { Badge, Button, Card, IconButton, Searchbar } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -67,11 +68,14 @@ const normalizeCatalogRows = (rows = []) => {
 };
 
 export default function Catalogo() {
-  const { cardCode, cardName } = useLocalSearchParams();
+  const { cardCode, cardName, zona, idRuta } = useLocalSearchParams();
   const router = useRouter();
+  const isFocused = useIsFocused();
   const { addToCart, cart } = useCart();
   const safeCardCode = String(Array.isArray(cardCode) ? cardCode[0] : cardCode || '').trim();
   const safeCardName = String(Array.isArray(cardName) ? cardName[0] : cardName || '').trim();
+  const safeZona = String(Array.isArray(zona) ? zona[0] : zona || '').trim();
+  const safeIdRuta = String(Array.isArray(idRuta) ? idRuta[0] : idRuta || '').trim();
 
   const [items, setItems] = useState(null);
   const [search, setSearch] = useState('');
@@ -90,6 +94,13 @@ export default function Catalogo() {
 
     return () => clearTimeout(timeout);
   }, [search]);
+
+  useEffect(() => {
+    if (isFocused || (!search && !debouncedSearch)) return;
+    setSearch('');
+    setDebouncedSearch('');
+    setIsSearchLoading(false);
+  }, [isFocused, search, debouncedSearch]);
 
   const fetchProductos = useCallback(
     async ({ reset = false, searchTerm = debouncedSearch } = {}) => {
@@ -188,9 +199,15 @@ export default function Catalogo() {
   const cartCount = cart.reduce((acc, item) => acc + item.quantity, 0);
   const handleAddToCart = useCallback(
     (item, quantityToAdd = 1) => {
-      addToCart({ ...item, CardCode: safeCardCode, quantity: quantityToAdd });
+      addToCart({
+        ...item,
+        CardCode: safeCardCode,
+        Zona: safeZona,
+        IdRuta: safeIdRuta,
+        quantity: quantityToAdd
+      });
     },
-    [addToCart, safeCardCode]
+    [addToCart, safeCardCode, safeZona, safeIdRuta]
   );
   const handleLoadMore = useCallback(() => {
     fetchProductos({ reset: false, searchTerm: debouncedSearch });

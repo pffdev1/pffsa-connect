@@ -26,6 +26,18 @@ const normalizeSellerName = (value = '') =>
     .replace(/[._-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .toUpperCase();
+const buildRealtimeEqFilter = (column, value = '') => {
+  const safeValue = String(value || '').trim().replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  if (!safeValue) return undefined;
+  return `${column}=eq."${safeValue}"`;
+};
+const buildChannelSellerToken = (value = '') => {
+  const token = String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return token || 'all';
+};
 const matchesSearchTerm = (item, normalizedTerm) => {
   if (!normalizedTerm) return true;
   return [item?.CardName, item?.CardCode, item?.CardFName, item?.RUC].some((value) =>
@@ -166,14 +178,20 @@ export default function Clientes() {
     if (!profile) return undefined;
 
     const normalizedSeller = normalizeSellerName(profile.fullName);
+    const realtimeFilter =
+      profile.role === 'admin' || !normalizedSeller ? undefined : buildRealtimeEqFilter('Vendedor', normalizedSeller);
+    const channelSellerToken = buildChannelSellerToken(normalizedSeller);
+
+    setRealtimeStatus('CONNECTING');
     const channel = supabase
-      .channel(`customers-unlock-${profile.role}-${normalizedSeller || 'all'}`)
+      .channel(`customers-unlock-${profile.role}-${channelSellerToken}`)
       .on(
         'postgres_changes',
         {
           event: 'UPDATE',
           schema: 'public',
-          table: 'customers'
+          table: 'customers',
+          ...(realtimeFilter ? { filter: realtimeFilter } : {})
         },
         (payload) => {
           const cardCode = payload?.new?.CardCode;
@@ -214,11 +232,15 @@ export default function Clientes() {
       )
       .subscribe((status, err) => {
         setRealtimeStatus(status);
-        if (status === 'CHANNEL_ERROR') {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           const errorText = String(err?.message || err?.error || 'unknown_error');
           if (realtimeErrorRef.current !== errorText) {
             realtimeErrorRef.current = errorText;
-            console.error('Realtime customers channel error:', errorText);
+            console.error('Realtime customers channel error:', {
+              status,
+              filter: realtimeFilter || '(none)',
+              reason: errorText
+            });
           }
         }
       });
@@ -409,7 +431,9 @@ export default function Clientes() {
       pathname: '/catalogo',
       params: {
         cardCode: item.CardCode,
-        cardName: item.CardFName || item.CardName
+        cardName: item.CardFName || item.CardName,
+        zona: item.Zona || '',
+        idRuta: item.IDRuta || item.IdRuta || item.Ruta || ''
       }
     });
   };

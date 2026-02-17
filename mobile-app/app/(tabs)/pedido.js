@@ -1,19 +1,66 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, FlatList, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Button, Card, IconButton } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import { useCart } from '../../src/context/CartContext';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { supabase } from '../../src/services/supabaseClient';
+import { useCart } from '../../src/context/CartContext';
 import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
+
+const WAREHOUSE_OPTIONS = [
+  { code: '100', name: 'CEDI' },
+  { code: '010', name: 'CHIRIQUI' }
+];
+const SAP_DOCNUM_POLL_ATTEMPTS = 7;
+const SAP_DOCNUM_POLL_DELAY_MS = 700;
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const formatDateToISO = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+const parseISODate = (value) => {
+  const trimmed = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return null;
+  const [year, month, day] = trimmed.split('-').map(Number);
+  const parsed = new Date(year, month - 1, day);
+  if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) return null;
+  return parsed;
+};
+const getToday = () => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return today;
+};
 
 export default function Pedido() {
   const router = useRouter();
   const { cart, addToCart, removeFromCart, updateCartItemQuantity, clearCart, getTotal } = useCart();
   const [quantityDrafts, setQuantityDrafts] = useState({});
+  const [checkoutModalVisible, setCheckoutModalVisible] = useState(false);
+  const [deliveryDate, setDeliveryDate] = useState('');
+  const [selectedWarehouse, setSelectedWarehouse] = useState('100');
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [submittingOrder, setSubmittingOrder] = useState(false);
+  const openSessionExpiredAlert = () => {
+    setCheckoutModalVisible(false);
+    setShowDatePicker(false);
+    Alert.alert('Sesion expirada', 'Tu sesion expiro. Debes iniciar sesion nuevamente.', [
+      {
+        text: 'OK',
+        onPress: async () => {
+          await supabase.auth.signOut();
+          clearCart();
+          router.replace({ pathname: '/login', params: { refresh: String(Date.now()) } });
+        }
+      }
+    ]);
+  };
 
   const formatQuantity = (value) => {
     const n = Number(value);
@@ -88,17 +135,205 @@ export default function Pedido() {
       return;
     }
 
-    Alert.alert('Confirmar Pedido', `Deseas enviar este pedido por un total de $${getTotal().toFixed(2)}?`, [
+    if (!deliveryDate) {
+      setDeliveryDate(formatDateToISO(getToday()));
+    }
+    setCheckoutModalVisible(true);
+  };
+
+  const isValidDeliveryDate = (value) => {
+    const trimmed = String(value || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return false;
+
+    const [year, month, day] = trimmed.split('-').map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+  };
+
+  const handleSubmitPedido = () => {
+    const safeDate = String(deliveryDate || '').trim();
+    if (!isValidDeliveryDate(safeDate)) {
+      Alert.alert('Fecha invalida', 'Ingresa la fecha en formato YYYY-MM-DD.');
+      return;
+    }
+
+    const warehouse = WAREHOUSE_OPTIONS.find((option) => option.code === selectedWarehouse);
+    if (!warehouse) {
+      Alert.alert('Almacen requerido', 'Selecciona un almacen de origen.');
+      return;
+    }
+
+    const firstItem = cart?.[0] || {};
+    const safeCardCode = String(firstItem.CardCode || '').trim();
+    if (!safeCardCode) {
+      Alert.alert('Datos incompletos', 'No se encontro CardCode en el carrito. Vuelve a seleccionar cliente.');
+      return;
+    }
+
+    const linesPayload = cart
+      .map((item) => ({
+        ItemCode: String(item?.ItemCode || '').trim(),
+        Quantity: Number(item?.quantity),
+        WarehouseCode: warehouse.code
+      }))
+      .filter((line) => line.ItemCode && Number.isFinite(line.Quantity) && line.Quantity > 0);
+
+    if (!linesPayload.length || linesPayload.length !== cart.length) {
+      Alert.alert('Lineas invalidas', 'Hay productos sin codigo o cantidad valida.');
+      return;
+    }
+
+    const sendOrder = async () => {
+      try {
+        setSubmittingOrder(true);
+        const {
+          data: { user },
+          error: userError
+        } = await supabase.auth.getUser();
+
+        if (userError) {
+          openSessionExpiredAlert();
+          return;
+        }
+        if (!user?.id) {
+          openSessionExpiredAlert();
+          return;
+        }
+
+        let resolvedZona = String(firstItem.Zona || firstItem.zona || '').trim();
+        let resolvedIdRuta = String(firstItem.IdRuta || firstItem.IDRuta || firstItem.idRuta || '').trim();
+
+        if (!resolvedZona || !resolvedIdRuta) {
+          const { data: customerMeta, error: customerMetaError } = await supabase
+            .from('customers')
+            .select('Zona, IDRuta, IdRuta, Ruta')
+            .eq('CardCode', safeCardCode)
+            .single();
+
+          if (!customerMetaError && customerMeta) {
+            resolvedZona = resolvedZona || String(customerMeta.Zona || '').trim();
+            resolvedIdRuta =
+              resolvedIdRuta ||
+              String(customerMeta.IDRuta || customerMeta.IdRuta || customerMeta.Ruta || '').trim();
+          }
+        }
+
+        if (!resolvedZona || !resolvedIdRuta) {
+          throw new Error(
+            'Faltan datos del cliente para crear el pedido (Zona/IdRuta). Verifica el cliente en la tabla customers.'
+          );
+        }
+
+        const rpcPayload = {
+          p_card_code: safeCardCode,
+          p_doc_due_date: safeDate,
+          p_zona: resolvedZona,
+          p_id_ruta: resolvedIdRuta,
+          p_lines: linesPayload
+        };
+
+        console.log('create_sales_order payload', rpcPayload);
+        console.log('create_sales_order user', user.id);
+        const { data: orderId, error } = await supabase.rpc('create_sales_order', {
+          ...rpcPayload
+        });
+
+        if (error) throw error;
+
+        let sapDocNum = null;
+        if (orderId) {
+          for (let attempt = 0; attempt < SAP_DOCNUM_POLL_ATTEMPTS; attempt += 1) {
+            const { data: createdOrder, error: orderReadError } = await supabase
+              .from('sales_orders')
+              .select('sap_docnum, status')
+              .eq('id', orderId)
+              .maybeSingle();
+
+            if (!orderReadError && createdOrder?.sap_docnum) {
+              sapDocNum = String(createdOrder.sap_docnum).trim();
+              break;
+            }
+
+            if (!orderReadError && createdOrder?.status === 'error') {
+              break;
+            }
+
+            if (attempt < SAP_DOCNUM_POLL_ATTEMPTS - 1) {
+              await wait(SAP_DOCNUM_POLL_DELAY_MS);
+            }
+          }
+        }
+
+        setCheckoutModalVisible(false);
+        setShowDatePicker(false);
+        setDeliveryDate('');
+        setSelectedWarehouse('100');
+        clearCart();
+        Alert.alert(
+          'Exito',
+          sapDocNum
+            ? `Pedido ${sapDocNum} guardado exitosamente. Puedes validar todos tus pedidos desde tu perfil.`
+            : 'Pedido guardado exitosamente. Puedes validar el status de SAP desde tu perfil.'
+        );
+        router.replace('/clientes');
+      } catch (error) {
+        console.error('create_sales_order rpc failed', error);
+        const rawErrorText = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+        const isSessionExpired =
+          rawErrorText.includes('auth session missing') ||
+          rawErrorText.includes('usuario no autenticado') ||
+          rawErrorText.includes('jwt') ||
+          rawErrorText.includes('not authenticated') ||
+          error?.status === 401 ||
+          error?.code === 'PGRST301';
+
+        if (isSessionExpired) {
+          openSessionExpiredAlert();
+          return;
+        }
+
+        const detailParts = [
+          error?.message,
+          error?.details,
+          error?.hint,
+          error?.code ? `Code: ${error.code}` : ''
+        ]
+          .map((part) => String(part || '').trim())
+          .filter(Boolean);
+        const message = detailParts.join('\n') || 'No se pudo crear el pedido.';
+        Alert.alert('Error al enviar', message);
+      } finally {
+        setSubmittingOrder(false);
+      }
+    };
+
+    Alert.alert(
+      'Confirmar Pedido',
+      `Deseas enviar este pedido por un total de $${getTotal().toFixed(2)}?\nFecha: ${safeDate}\nAlmacen: ${warehouse.code} - ${warehouse.name}`,
+      [
       { text: 'Cancelar', style: 'cancel' },
       {
+        style: 'destructive',
         text: 'Enviar',
-        onPress: () => {
-          Alert.alert('Exito', 'Pedido enviado correctamente (Simulacion)');
-          clearCart();
-          router.replace('/clientes');
-        }
+        onPress: sendOrder
       }
-    ]);
+      ]
+    );
+  };
+
+  const handleDateChange = (event, selectedDate) => {
+    if (event?.type === 'dismissed') {
+      setShowDatePicker(false);
+      return;
+    }
+
+    if (!selectedDate) return;
+
+    const normalized = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+    setDeliveryDate(formatDateToISO(normalized));
+    if (Platform.OS === 'android') {
+      setShowDatePicker(false);
+    }
   };
 
   const renderItem = ({ item }) => (
@@ -199,6 +434,86 @@ export default function Pedido() {
           </View>
         </>
       )}
+
+      <Modal
+        visible={checkoutModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setCheckoutModalVisible(false);
+          setShowDatePicker(false);
+        }}
+      >
+        <Pressable
+          style={styles.checkoutBackdrop}
+          onPress={() => {
+            setCheckoutModalVisible(false);
+            setShowDatePicker(false);
+          }}
+        >
+          <Pressable style={styles.checkoutPanel} onPress={(event) => event.stopPropagation()}>
+            <Text style={styles.checkoutTitle}>Datos de entrega</Text>
+            <Text style={styles.checkoutLabel}>Fecha de entrega</Text>
+            <Pressable style={styles.checkoutDateButton} onPress={() => setShowDatePicker(true)}>
+              <View style={styles.checkoutDateButtonContent}>
+                <Ionicons name="calendar-outline" size={18} color={COLORS.primary} />
+                <Text style={deliveryDate ? styles.checkoutDateValue : styles.checkoutDatePlaceholder}>
+                  {deliveryDate || 'Seleccionar fecha'}
+                </Text>
+              </View>
+            </Pressable>
+            {showDatePicker && (
+              <DateTimePicker
+                value={parseISODate(deliveryDate) || getToday()}
+                mode="date"
+                minimumDate={getToday()}
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={handleDateChange}
+              />
+            )}
+
+            <Text style={styles.checkoutLabel}>Almacen de origen</Text>
+            <View style={styles.warehouseList}>
+              {WAREHOUSE_OPTIONS.map((option) => {
+                const isActive = selectedWarehouse === option.code;
+                return (
+                  <Pressable
+                    key={option.code}
+                    onPress={() => setSelectedWarehouse(option.code)}
+                    style={[styles.warehouseOption, isActive && styles.warehouseOptionActive]}
+                  >
+                    <Text style={[styles.warehouseOptionCode, isActive && styles.warehouseOptionCodeActive]}>{option.code}</Text>
+                    <Text style={[styles.warehouseOptionName, isActive && styles.warehouseOptionNameActive]}>{option.name}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={styles.checkoutActions}>
+              <Button
+                mode="text"
+                textColor={COLORS.textLight}
+                disabled={submittingOrder}
+                onPress={() => {
+                  setCheckoutModalVisible(false);
+                  setShowDatePicker(false);
+                }}
+              >
+                CANCELAR
+              </Button>
+              <Button
+                mode="contained"
+                buttonColor={COLORS.primary}
+                onPress={handleSubmitPedido}
+                loading={submittingOrder}
+                disabled={submittingOrder}
+              >
+                ENVIAR
+              </Button>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -248,6 +563,54 @@ const styles = StyleSheet.create({
   actionButtons: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
   btnCancel: { flex: 1 },
   btnConfirm: { flex: 2, borderRadius: 8 },
+  checkoutBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 18
+  },
+  checkoutPanel: {
+    width: '100%',
+    maxWidth: 520,
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    padding: 16
+  },
+  checkoutTitle: { fontSize: 18, fontWeight: '800', color: COLORS.primary, marginBottom: 10 },
+  checkoutLabel: { fontSize: 13, fontWeight: '700', color: COLORS.text, marginBottom: 6, marginTop: 6 },
+  checkoutDateButton: {
+    borderWidth: 1,
+    borderColor: '#D6DFEA',
+    borderRadius: 10,
+    height: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    backgroundColor: '#FFF'
+  },
+  checkoutDateButtonContent: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  checkoutDateValue: { fontSize: 15, fontWeight: '700', color: COLORS.text },
+  checkoutDatePlaceholder: { fontSize: 15, color: COLORS.textLight },
+  warehouseList: { gap: 8, marginTop: 4 },
+  warehouseOption: {
+    borderWidth: 1,
+    borderColor: '#D6DFEA',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10
+  },
+  warehouseOptionActive: {
+    borderColor: COLORS.primary,
+    backgroundColor: '#EAF1FA'
+  },
+  warehouseOptionCode: { fontSize: 14, fontWeight: '800', color: COLORS.textLight },
+  warehouseOptionCodeActive: { color: COLORS.primary },
+  warehouseOptionName: { fontSize: 14, fontWeight: '700', color: COLORS.text },
+  warehouseOptionNameActive: { color: COLORS.primary },
+  checkoutActions: { marginTop: 14, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 8 },
   emptyWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
   emptyCard: { width: '100%', maxWidth: 520, borderRadius: 24, backgroundColor: '#FFF' },
   emptyContainer: { alignItems: 'center', paddingVertical: 20 },
