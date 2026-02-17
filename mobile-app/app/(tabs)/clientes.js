@@ -6,12 +6,14 @@ import { BottomSheetModal, BottomSheetView } from '@gorhom/bottom-sheet';
 import { Avatar, Badge, Button, Chip, Divider, IconButton, Modal, Portal, Searchbar, Surface } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown } from 'react-native-reanimated';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../src/services/supabaseClient';
 import { useCart } from '../../src/context/CartContext';
 import { COLORS } from '../../src/constants/theme';
 import CustomerGrid from '../../src/components/CustomerGrid';
 
 const PAGE_SIZE = 50;
+const MAX_UNLOCK_NOTIFICATIONS = 30;
 const MIN_SKELETON_MS = 700;
 const SEARCH_DEBOUNCE_MS = 280;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -56,6 +58,7 @@ export default function Clientes() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [authUserId, setAuthUserId] = useState('');
   const [unlockNotifications, setUnlockNotifications] = useState([]);
   const [notificationsVisible, setNotificationsVisible] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState('CONNECTING');
@@ -63,11 +66,16 @@ export default function Clientes() {
   const clientesRef = useRef([]);
   const blockedStateRef = useRef(new Map());
   const realtimeErrorRef = useRef('');
+  const hasHydratedNotificationsRef = useRef(false);
   const isLoadingMoreRef = useRef(false);
   const hasInitializedSearchRef = useRef(false);
   const detailsSheetRef = useRef(null);
   const snapPoints = useMemo(() => ['83%'], []);
   const unreadUnlockCount = useMemo(() => unlockNotifications.filter((item) => !item.read).length, [unlockNotifications]);
+  const notificationsStorageKey = useMemo(() => {
+    if (!authUserId) return null;
+    return `clientes:unlock-notifications:${authUserId}`;
+  }, [authUserId]);
   const router = useRouter();
   const { clearCart } = useCart();
 
@@ -131,6 +139,7 @@ export default function Clientes() {
         }
 
         if (!isMounted.current) return;
+        setAuthUserId(user.id);
         setProfile(nextProfile);
         setClientes(null);
         setHasMore(true);
@@ -173,6 +182,56 @@ export default function Clientes() {
       isMounted.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!notificationsStorageKey) return undefined;
+
+    let cancelled = false;
+    hasHydratedNotificationsRef.current = false;
+
+    const hydrateNotifications = async () => {
+      try {
+        const rawValue = await AsyncStorage.getItem(notificationsStorageKey);
+        if (cancelled) return;
+
+        if (!rawValue) {
+          setUnlockNotifications([]);
+          return;
+        }
+
+        const parsed = JSON.parse(rawValue);
+        if (!Array.isArray(parsed)) {
+          setUnlockNotifications([]);
+          return;
+        }
+
+        setUnlockNotifications(parsed.slice(0, MAX_UNLOCK_NOTIFICATIONS));
+      } catch (_error) {
+        if (!cancelled) {
+          setUnlockNotifications([]);
+        }
+      } finally {
+        if (!cancelled) {
+          hasHydratedNotificationsRef.current = true;
+        }
+      }
+    };
+
+    hydrateNotifications();
+
+    return () => {
+      cancelled = true;
+      hasHydratedNotificationsRef.current = false;
+    };
+  }, [notificationsStorageKey]);
+
+  useEffect(() => {
+    if (!notificationsStorageKey || !hasHydratedNotificationsRef.current) return;
+
+    AsyncStorage.setItem(notificationsStorageKey, JSON.stringify(unlockNotifications.slice(0, MAX_UNLOCK_NOTIFICATIONS))).catch(
+      () => {}
+    );
+  }, [unlockNotifications, notificationsStorageKey]);
 
   useEffect(() => {
     if (!profile) return undefined;
@@ -220,7 +279,7 @@ export default function Clientes() {
               createdAt: new Date().toISOString(),
               read: false
             };
-            setUnlockNotifications((prev) => [notificationItem, ...prev].slice(0, 30));
+            setUnlockNotifications((prev) => [notificationItem, ...prev].slice(0, MAX_UNLOCK_NOTIFICATIONS));
           }
 
           if (!payload?.new?.CardCode) return;
@@ -287,7 +346,7 @@ export default function Clientes() {
               createdAt: new Date().toISOString(),
               read: false
             };
-            setUnlockNotifications((prev) => [notificationItem, ...prev].slice(0, 30));
+            setUnlockNotifications((prev) => [notificationItem, ...prev].slice(0, MAX_UNLOCK_NOTIFICATIONS));
           }
 
           blockedStateRef.current.set(cardCode, nextBlocked);

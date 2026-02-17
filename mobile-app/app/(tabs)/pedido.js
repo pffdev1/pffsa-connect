@@ -6,7 +6,7 @@ import { Button, Card, IconButton } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { supabase } from '../../src/services/supabaseClient';
 import { useCart } from '../../src/context/CartContext';
 import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
@@ -31,6 +31,11 @@ const parseISODate = (value) => {
   const parsed = new Date(year, month - 1, day);
   if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) return null;
   return parsed;
+};
+const formatDateForDisplay = (value) => {
+  const parsed = parseISODate(value);
+  if (!parsed) return 'Sin fecha seleccionada';
+  return parsed.toLocaleDateString('es-PA', { year: 'numeric', month: 'long', day: '2-digit' });
 };
 const getToday = () => {
   const today = new Date();
@@ -336,6 +341,22 @@ export default function Pedido() {
     }
   };
 
+  const handleOpenDatePicker = () => {
+    const currentDate = parseISODate(deliveryDate) || getToday();
+
+    if (Platform.OS === 'android') {
+      DateTimePickerAndroid.open({
+        value: currentDate,
+        mode: 'date',
+        minimumDate: getToday(),
+        onChange: handleDateChange
+      });
+      return;
+    }
+
+    setShowDatePicker(true);
+  };
+
   const renderItem = ({ item }) => (
     <Card style={[styles.cartItem, GLOBAL_STYLES.shadow]} mode="contained">
       <Card.Content style={styles.itemContent}>
@@ -454,15 +475,16 @@ export default function Pedido() {
           <Pressable style={styles.checkoutPanel} onPress={(event) => event.stopPropagation()}>
             <Text style={styles.checkoutTitle}>Datos de entrega</Text>
             <Text style={styles.checkoutLabel}>Fecha de entrega</Text>
-            <Pressable style={styles.checkoutDateButton} onPress={() => setShowDatePicker(true)}>
+            <Pressable style={styles.checkoutDateButton} onPress={handleOpenDatePicker}>
               <View style={styles.checkoutDateButtonContent}>
                 <Ionicons name="calendar-outline" size={18} color={COLORS.primary} />
                 <Text style={deliveryDate ? styles.checkoutDateValue : styles.checkoutDatePlaceholder}>
-                  {deliveryDate || 'Seleccionar fecha'}
+                  {deliveryDate || formatDateToISO(getToday())}
                 </Text>
               </View>
             </Pressable>
-            {showDatePicker && (
+            <Text style={styles.checkoutDateHint}>{formatDateForDisplay(deliveryDate || formatDateToISO(getToday()))}</Text>
+            {Platform.OS === 'ios' && showDatePicker && (
               <DateTimePicker
                 value={parseISODate(deliveryDate) || getToday()}
                 mode="date"
@@ -591,6 +613,7 @@ const styles = StyleSheet.create({
   checkoutDateButtonContent: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   checkoutDateValue: { fontSize: 15, fontWeight: '700', color: COLORS.text },
   checkoutDatePlaceholder: { fontSize: 15, color: COLORS.textLight },
+  checkoutDateHint: { fontSize: 12, color: COLORS.textLight, marginTop: 6 },
   warehouseList: { gap: 8, marginTop: 4 },
   warehouseOption: {
     borderWidth: 1,
