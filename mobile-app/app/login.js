@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Image, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as Linking from 'expo-linking';
 import { Button, HelperText, TextInput } from 'react-native-paper';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -26,6 +27,12 @@ const loginSchema = z.object({
 export default function Login() {
   const router = useRouter();
   const { refresh } = useLocalSearchParams();
+  const resetRedirectTo = useMemo(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin) {
+      return `${window.location.origin}/reset-password`;
+    }
+    return Linking.createURL('reset-password');
+  }, []);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sendingReset, setSendingReset] = useState(false);
@@ -71,9 +78,11 @@ export default function Login() {
 
     try {
       setSendingReset(true);
-      const { error } = await supabase.auth.resetPasswordForEmail(userEmail);
+      const { error } = await supabase.auth.resetPasswordForEmail(userEmail, {
+        redirectTo: resetRedirectTo
+      });
       if (error) throw error;
-      alert('Te enviamos un enlace para restablecer tu contrasena. Se abrira en navegador segun la configuracion de Supabase.');
+      alert('Te enviamos un enlace para restablecer tu contrasena. Si estas en movil, abrira la app en la pantalla de nueva contrasena.');
     } catch (error) {
       alert(error.message || 'No se pudo enviar el enlace de recuperacion.');
     } finally {
