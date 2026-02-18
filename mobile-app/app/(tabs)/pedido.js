@@ -1,12 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Animated, FlatList, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import { Button, Card, IconButton } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
+import { Swipeable } from 'react-native-gesture-handler';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { clearLocalSupabaseSession, supabase } from '../../src/services/supabaseClient';
 import { enqueuePendingOrder, flushPendingOrders } from '../../src/services/offlineService';
 import { useCart } from '../../src/context/CartContext';
@@ -16,8 +19,9 @@ const WAREHOUSE_OPTIONS = [
   { code: '100', name: 'CEDI' },
   { code: '010', name: 'CHIRIQUI' }
 ];
-const SAP_DOCNUM_POLL_ATTEMPTS = 7;
-const SAP_DOCNUM_POLL_DELAY_MS = 700;
+const SAP_DOCNUM_POLL_ATTEMPTS = 12;
+const SAP_DOCNUM_POLL_DELAY_MS = 1000;
+const SWIPE_HINT_SEEN_KEY = 'pedido:swipe-hint-seen:v1';
 const PRODUCT_FALLBACK_IMAGE =
   'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=300&q=80';
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -53,6 +57,7 @@ const resolveCartImageUrl = (item) => {
 
 export default function Pedido() {
   const router = useRouter();
+  const isFocused = useIsFocused();
   const { cart, addToCart, removeFromCart, updateCartItemQuantity, clearCart, getTotal } = useCart();
   const [quantityDrafts, setQuantityDrafts] = useState({});
   const [checkoutModalVisible, setCheckoutModalVisible] = useState(false);
@@ -60,6 +65,10 @@ export default function Pedido() {
   const [selectedWarehouse, setSelectedWarehouse] = useState('100');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [submittingOrder, setSubmittingOrder] = useState(false);
+  const [swipeHintReady, setSwipeHintReady] = useState(false);
+  const swipeableRefs = useRef(new Map());
+  const swipeHintPlayedRef = useRef(false);
+  const suppressSwipeDeleteRef = useRef(false);
   const cartCardCodes = useMemo(
     () => Array.from(new Set(cart.map((item) => String(item?.CardCode || '').trim()).filter(Boolean))),
     [cart]
@@ -67,6 +76,7 @@ export default function Pedido() {
   const hasMixedClients = cartCardCodes.length > 1;
   const orderCustomerCode = cartCardCodes[0] || '';
   const orderCustomerName = String(cart?.[0]?.CustomerName || cart?.[0]?.CardName || '').trim();
+  const screenOptions = useMemo(() => ({ title: 'Resumen de Pedido' }), []);
   const openSessionExpiredAlert = () => {
     setCheckoutModalVisible(false);
     setShowDatePicker(false);
@@ -108,7 +118,7 @@ export default function Pedido() {
       const next = {};
       cart.forEach((item) => {
         const key = item.cartKey || item.ItemCode;
-        next[key] = prev[key] ?? formatQuantity(item.quantity);
+        next[key] = formatQuantity(item.quantity);
       });
       return next;
     });
@@ -127,10 +137,94 @@ export default function Pedido() {
     updateCartItemQuantity(identifier, normalized);
     setQuantityDrafts((prev) => ({ ...prev, [identifier]: formatQuantity(normalized) }));
   };
+  const handleRemoveItem = (identifier) => {
+    updateCartItemQuantity(identifier, 0);
+    setQuantityDrafts((prev) => {
+      const next = { ...prev };
+      delete next[identifier];
+      return next;
+    });
+  };
+
+  const renderSwipeRightAction = (dragX, itemKey) => {
+    const translateX = dragX.interpolate({
+      inputRange: [-160, -20, 0],
+      outputRange: [0, 18, 32],
+      extrapolate: 'clamp'
+    });
+    const opacity = dragX.interpolate({
+      inputRange: [-120, -40, 0],
+      outputRange: [1, 0.75, 0.45],
+      extrapolate: 'clamp'
+    });
+    const scale = dragX.interpolate({
+      inputRange: [-140, -60, 0],
+      outputRange: [1.05, 1, 0.92],
+      extrapolate: 'clamp'
+    });
+
+    return (
+      <Pressable style={styles.swipeAction} onPress={() => handleRemoveItem(itemKey)}>
+        <Animated.View style={[styles.swipeActionContent, { opacity, transform: [{ translateX }, { scale }] }]}>
+          <Ionicons name="trash-outline" size={16} color="#FFF" />
+          <Text style={styles.swipeActionText}>Eliminar</Text>
+        </Animated.View>
+      </Pressable>
+    );
+  };
 
   useEffect(() => {
     flushPendingOrders().catch(() => {});
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const hydrateSwipeHint = async () => {
+      try {
+        const seen = await AsyncStorage.getItem(SWIPE_HINT_SEEN_KEY);
+        if (seen) {
+          swipeHintPlayedRef.current = true;
+        }
+      } catch (_error) {
+        // Ignore storage failures; fallback is showing hint once in current session.
+      } finally {
+        if (!cancelled) {
+          setSwipeHintReady(true);
+        }
+      }
+    };
+
+    hydrateSwipeHint();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isFocused || !swipeHintReady || swipeHintPlayedRef.current || cart.length === 0) return;
+
+    const firstItem = cart[0];
+    const firstKey = firstItem?.cartKey || firstItem?.ItemCode;
+    if (!firstKey) return;
+
+    const openTimer = setTimeout(() => {
+      const row = swipeableRefs.current.get(firstKey);
+      if (!row?.openRight || !row?.close) return;
+
+      suppressSwipeDeleteRef.current = true;
+      row.openRight();
+
+      setTimeout(() => {
+        row.close();
+        suppressSwipeDeleteRef.current = false;
+      }, 500);
+
+      swipeHintPlayedRef.current = true;
+      AsyncStorage.setItem(SWIPE_HINT_SEEN_KEY, '1').catch(() => {});
+    }, 360);
+
+    return () => clearTimeout(openTimer);
+  }, [isFocused, swipeHintReady, cart]);
 
   const handleConfirmarPedido = async () => {
     if (cart.length === 0) {
@@ -269,9 +363,6 @@ export default function Pedido() {
           p_lines: linesPayload
         };
         queuedPayload = rpcPayload;
-
-        console.log('create_sales_order payload', rpcPayload);
-        console.log('create_sales_order user', user.id);
         const { data: orderId, error } = await supabase.rpc('create_sales_order', {
           ...rpcPayload
         });
@@ -307,13 +398,17 @@ export default function Pedido() {
         setDeliveryDate('');
         setSelectedWarehouse('100');
         clearCart();
-        Alert.alert(
-          'Exito',
-          sapDocNum
-            ? `Pedido ${sapDocNum} guardado exitosamente. Puedes validar todos tus pedidos desde tu perfil.`
-            : 'Pedido guardado exitosamente. Puedes validar el status de SAP desde tu perfil.'
-        );
-        router.replace({ pathname: '/clientes', params: { orderCompleted: String(Date.now()) } });
+        const successMessage = sapDocNum
+          ? `Pedido ${sapDocNum} guardado exitosamente. Puedes validar todos tus pedidos desde tu perfil.`
+          : 'Pedido guardado exitosamente. SAP aun esta asignando el numero; revisa el estado en tu perfil.';
+        Alert.alert('Exito', successMessage, [
+          {
+            text: 'OK',
+            onPress: () => {
+              router.replace({ pathname: '/(tabs)/clientes', params: { orderCompleted: String(Date.now()) } });
+            }
+          }
+        ]);
       } catch (error) {
         console.error('create_sales_order rpc failed', error);
         const rawErrorText = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
@@ -348,7 +443,7 @@ export default function Pedido() {
           setSelectedWarehouse('100');
           clearCart();
           Alert.alert('Sin conexion', 'Tu pedido se guardo en cola y se enviara automaticamente cuando vuelva la conexion.');
-          router.replace('/clientes');
+          router.replace('/(tabs)/clientes');
           return;
         }
 
@@ -415,58 +510,75 @@ export default function Pedido() {
   const renderItem = ({ item }) => {
     const itemKey = item.cartKey || item.ItemCode;
     return (
-      <Card style={[styles.cartItem, GLOBAL_STYLES.shadow]} mode="contained">
-      <Card.Content style={styles.itemContent}>
-        <View style={styles.itemThumbWrap}>
-          <Image source={{ uri: resolveCartImageUrl(item) }} contentFit="cover" transition={120} style={styles.itemThumbImage} />
-        </View>
-        <View style={styles.itemInfo}>
-          <Text style={styles.itemName}>{item.ItemName}</Text>
-          <Text style={styles.itemPrice}>Unitario: ${parseFloat(item.Price).toFixed(2)}</Text>
-          <Text style={styles.itemSubtotal}>Subtotal: ${(item.Price * item.quantity).toFixed(2)}</Text>
-        </View>
+      <Swipeable
+        ref={(ref) => {
+          if (ref) swipeableRefs.current.set(itemKey, ref);
+          else swipeableRefs.current.delete(itemKey);
+        }}
+        overshootRight={false}
+        rightThreshold={56}
+        friction={1.9}
+        onSwipeableOpen={(direction) => {
+          if (suppressSwipeDeleteRef.current) return;
+          if (direction === 'right') {
+            handleRemoveItem(itemKey);
+          }
+        }}
+        renderRightActions={(_progress, dragX) => renderSwipeRightAction(dragX, itemKey)}
+      >
+        <Card style={[styles.cartItem, GLOBAL_STYLES.shadow]} mode="contained">
+          <Card.Content style={styles.itemContent}>
+            <View style={styles.itemThumbWrap}>
+              <Image source={{ uri: resolveCartImageUrl(item) }} contentFit="cover" transition={120} style={styles.itemThumbImage} />
+            </View>
+            <View style={styles.itemInfo}>
+              <Text style={styles.itemName}>{item.ItemName}</Text>
+              <Text style={styles.itemPrice}>Unitario: ${parseFloat(item.Price).toFixed(2)}</Text>
+              <Text style={styles.itemSubtotal}>Subtotal: ${(item.Price * item.quantity).toFixed(2)}</Text>
+            </View>
 
-        <View style={styles.quantityControls}>
-          <IconButton
-            icon="minus"
-            size={18}
-            style={styles.iconBtn}
-            onPress={() => {
-              removeFromCart(itemKey);
-              setQuantityDrafts((prev) => ({ ...prev, [itemKey]: formatQuantity(Math.max(0, item.quantity - 1)) }));
-            }}
-          />
-          <TextInput
-            value={quantityDrafts[itemKey] ?? formatQuantity(item.quantity)}
-            onChangeText={(value) =>
-              setQuantityDrafts((prev) => ({
-                ...prev,
-                [itemKey]: sanitizeQuantityInput(value)
-              }))
-            }
-            onBlur={() => commitDraftQuantity(itemKey, item.quantity)}
-            keyboardType="decimal-pad"
-            style={styles.quantityInput}
-            maxLength={8}
-          />
-          <IconButton
-            icon="plus"
-            size={18}
-            style={styles.iconBtn}
-            onPress={() => {
-              addToCart({ ...item, quantity: 1 });
-              setQuantityDrafts((prev) => ({ ...prev, [itemKey]: formatQuantity(item.quantity + 1) }));
-            }}
-          />
-        </View>
-      </Card.Content>
-      </Card>
+            <View style={styles.quantityControls}>
+              <IconButton
+                icon="minus"
+                size={18}
+                style={styles.iconBtn}
+                onPress={() => {
+                  removeFromCart(itemKey);
+                  setQuantityDrafts((prev) => ({ ...prev, [itemKey]: formatQuantity(Math.max(0, item.quantity - 1)) }));
+                }}
+              />
+              <TextInput
+                value={quantityDrafts[itemKey] ?? formatQuantity(item.quantity)}
+                onChangeText={(value) =>
+                  setQuantityDrafts((prev) => ({
+                    ...prev,
+                    [itemKey]: sanitizeQuantityInput(value)
+                  }))
+                }
+                onBlur={() => commitDraftQuantity(itemKey, item.quantity)}
+                keyboardType="decimal-pad"
+                style={styles.quantityInput}
+                maxLength={8}
+              />
+              <IconButton
+                icon="plus"
+                size={18}
+                style={styles.iconBtn}
+                onPress={() => {
+                  addToCart({ ...item, quantity: 1 });
+                  setQuantityDrafts((prev) => ({ ...prev, [itemKey]: formatQuantity(item.quantity + 1) }));
+                }}
+              />
+            </View>
+          </Card.Content>
+        </Card>
+      </Swipeable>
     );
   };
 
   return (
     <SafeAreaView style={styles.container} edges={['left', 'right']}>
-      <Stack.Screen options={{ title: 'Resumen de Pedido' }} />
+      <Stack.Screen options={screenOptions} />
 
       {cart.length === 0 ? (
         <LinearGradient colors={['#0A2952', '#0E3D75', '#1664A0']} style={styles.emptyWrap}>
@@ -693,6 +805,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2
   },
   iconBtn: { margin: 0 },
+  swipeAction: {
+    width: 112,
+    marginBottom: 10,
+    borderRadius: 14,
+    overflow: 'hidden'
+  },
+  swipeActionContent: {
+    flex: 1,
+    backgroundColor: '#D64545',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 4
+  },
+  swipeActionText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '700'
+  },
   quantityInput: {
     minWidth: 72,
     height: 40,

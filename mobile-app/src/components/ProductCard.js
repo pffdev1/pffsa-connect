@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, Pressable, TextInput } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { COLORS, GLOBAL_STYLES } from '../constants/theme';
 
 const FALLBACK_PRODUCT =
@@ -28,7 +27,7 @@ function ProductCard({ item, onAdd, loading = false, isInCart = false }) {
 
   if (loading) {
     return (
-      <Animated.View entering={FadeIn.duration(260)}>
+      <View>
         <View style={[styles.card, GLOBAL_STYLES.shadow]}>
         <View style={styles.skeletonImage}>
           <View style={styles.skeletonBlock} />
@@ -45,7 +44,7 @@ function ProductCard({ item, onAdd, loading = false, isInCart = false }) {
           </View>
         </View>
         </View>
-      </Animated.View>
+      </View>
     );
   }
 
@@ -80,7 +79,7 @@ function ProductCard({ item, onAdd, loading = false, isInCart = false }) {
   };
 
   return (
-    <Animated.View entering={FadeInDown.duration(260).springify().damping(18)}>
+    <View>
       <View style={[styles.card, GLOBAL_STYLES.shadow, isInCart && styles.cardInCart]}>
         <TouchableOpacity activeOpacity={0.92} onPress={() => setPreviewVisible(true)}>
           <Image
@@ -132,7 +131,7 @@ function ProductCard({ item, onAdd, loading = false, isInCart = false }) {
           </View>
         </Pressable>
       </Modal>
-    </Animated.View>
+    </View>
   );
 }
 

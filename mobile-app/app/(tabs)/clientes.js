@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
@@ -88,6 +88,7 @@ export default function Clientes() {
   const hasHydratedNotificationsRef = useRef(false);
   const isLoadingMoreRef = useRef(false);
   const hasInitializedSearchRef = useRef(false);
+  const handledOrderCompletedRef = useRef('');
   const detailsSheetRef = useRef(null);
   const snapPoints = useMemo(() => ['83%'], []);
   const unreadUnlockCount = useMemo(() => unlockNotifications.filter((item) => !item.read).length, [unlockNotifications]);
@@ -98,8 +99,18 @@ export default function Clientes() {
   const router = useRouter();
   const { orderCompleted } = useLocalSearchParams();
   const { clearCart } = useCart();
+  const routerRef = useRef(router);
+  const clearCartRef = useRef(clearCart);
 
-  const handleLogout = async () => {
+  useEffect(() => {
+    routerRef.current = router;
+  }, [router]);
+
+  useEffect(() => {
+    clearCartRef.current = clearCart;
+  }, [clearCart]);
+
+  const handleLogout = useCallback(async () => {
     Alert.alert('Cerrar sesion', 'Estas seguro de que deseas salir?', [
       { text: 'Cancelar', style: 'cancel' },
       {
@@ -111,12 +122,23 @@ export default function Clientes() {
             Alert.alert('Error', 'No se pudo cerrar la sesion. Intenta nuevamente.');
             return;
           }
-          clearCart();
-          router.replace({ pathname: '/login', params: { refresh: String(Date.now()) } });
+          clearCartRef.current?.();
+          routerRef.current?.replace?.({ pathname: '/login', params: { refresh: String(Date.now()) } });
         }
       }
     ]);
-  };
+  }, []);
+  const clientesScreenOptions = useMemo(
+    () => ({
+      title: 'Directorio de Clientes',
+      headerRight: () => (
+        <Button icon="logout" mode="text" textColor="#FFF" onPress={handleLogout} compact>
+          Salir
+        </Button>
+      )
+    }),
+    [handleLogout]
+  );
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -127,9 +149,12 @@ export default function Clientes() {
   }, [search]);
 
   useEffect(() => {
-    if (!orderCompleted) return;
-    clearCart();
-  }, [orderCompleted, clearCart]);
+    const completedToken = Array.isArray(orderCompleted) ? String(orderCompleted[0] || '') : String(orderCompleted || '');
+    if (!completedToken) return;
+    if (handledOrderCompletedRef.current === completedToken) return;
+    handledOrderCompletedRef.current = completedToken;
+    clearCartRef.current?.();
+  }, [orderCompleted]);
 
   useEffect(() => {
     isMounted.current = true;
@@ -240,7 +265,9 @@ export default function Clientes() {
     return () => {
       isMounted.current = false;
     };
-  }, [router]);
+  // Run bootstrap once on mount; re-running causes repeated state churn.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!notificationsStorageKey) return undefined;
@@ -571,16 +598,7 @@ export default function Clientes() {
 
   return (
     <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
-      <Stack.Screen
-        options={{
-          title: 'Directorio de Clientes',
-          headerRight: () => (
-            <Button icon="logout" mode="text" textColor="#FFF" onPress={handleLogout} compact>
-              Salir
-            </Button>
-          )
-        }}
-      />
+      <Stack.Screen options={clientesScreenOptions} />
 
       <View style={styles.searchContainer}>
         <Searchbar

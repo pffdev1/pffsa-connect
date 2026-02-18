@@ -85,6 +85,7 @@ export default function Catalogo() {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [gridEpoch, setGridEpoch] = useState(0);
 
   useEffect(() => {
     setIsSearchLoading(true);
@@ -102,6 +103,12 @@ export default function Catalogo() {
     setDebouncedSearch('');
     setIsSearchLoading(false);
   }, [isFocused, search, debouncedSearch]);
+
+  useEffect(() => {
+    if (!isFocused) return;
+    setItems((prev) => (Array.isArray(prev) ? [...prev] : prev));
+    setGridEpoch((prev) => prev + 1);
+  }, [isFocused]);
 
   const fetchProductos = useCallback(
     async ({ reset = false, searchTerm = debouncedSearch } = {}) => {
@@ -275,10 +282,26 @@ export default function Catalogo() {
       setRefreshing(false);
     }
   }, [fetchProductos, debouncedSearch]);
+  const handleOpenPedido = useCallback(() => {
+    router.push('/pedido');
+  }, [router]);
+  const catalogScreenOptions = useMemo(
+    () => ({
+      title: 'Catalogo',
+      headerRight: () => (
+        <View style={styles.cartHeaderWrap}>
+          <IconButton icon="cart-outline" iconColor="#FFF" size={24} onPress={handleOpenPedido} style={styles.cartBtnHeader} />
+          {cartCount > 0 && <Badge style={styles.badge}>{cartCount}</Badge>}
+        </View>
+      )
+    }),
+    [cartCount, handleOpenPedido]
+  );
+  const emptyCatalogScreenOptions = useMemo(() => ({ title: 'Catalogo' }), []);
   if (!safeCardCode) {
     return (
       <SafeAreaView style={styles.container} edges={['left', 'right']}>
-        <Stack.Screen options={{ title: 'Catalogo' }} />
+        <Stack.Screen options={emptyCatalogScreenOptions} />
         <LinearGradient colors={['#0A2952', '#0E3D75', '#1664A0']} style={styles.emptyWrap}>
           <View style={styles.emptyPanel}>
             <View style={styles.emptyIcon}>
@@ -297,23 +320,7 @@ export default function Catalogo() {
 
   return (
     <SafeAreaView style={styles.container} edges={['left', 'right']}>
-      <Stack.Screen
-        options={{
-          title: 'Catalogo',
-          headerRight: () => (
-            <View style={styles.cartHeaderWrap}>
-              <IconButton
-                icon="cart-outline"
-                iconColor="#FFF"
-                size={24}
-                onPress={() => router.push('/pedido')}
-                style={styles.cartBtnHeader}
-              />
-              {cartCount > 0 && <Badge style={styles.badge}>{cartCount}</Badge>}
-            </View>
-          )
-        }}
-      />
+      <Stack.Screen options={catalogScreenOptions} />
 
       <LinearGradient colors={['#0F3C73', '#165A97']} style={styles.topPanel}>
         <View style={styles.clientInfoBanner}>
@@ -340,6 +347,7 @@ export default function Catalogo() {
       </LinearGradient>
 
       <ProductGrid
+        key={`catalog-grid-${safeCardCode}-${gridEpoch}`}
         data={isSearchLoading ? null : items}
         onAdd={handleAddToCart}
         selectedItemCodes={cartItemCodesForClient}

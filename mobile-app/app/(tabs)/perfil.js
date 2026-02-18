@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, FlatList, Modal, Pressable } from 'react-native';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import * as Linking from 'expo-linking';
@@ -86,6 +86,7 @@ const mapProductNameFromRow = (row) => {
 
 export default function Perfil() {
   const router = useRouter();
+  const routerRef = useRef(router);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [fullName, setFullName] = useState('');
@@ -144,6 +145,14 @@ export default function Perfil() {
   });
 
   const resetRedirectTo = useMemo(() => Linking.createURL('reset-password'), []);
+  const perfilScreenOptions = useMemo(
+    () => ({ title: role === 'admin' ? 'Panel Admin' : 'Mi Perfil' }),
+    [role]
+  );
+
+  useEffect(() => {
+    routerRef.current = router;
+  }, [router]);
 
   const normalizeSellerRow = useCallback((row) => {
     const sellerId = String(row?.seller_id || row?.id || '').trim();
@@ -295,14 +304,14 @@ export default function Perfil() {
         if (countError) throw countError;
         setClientesCount(count || 0);
 
-        await loadOrders(user.id, { reset: true });
+        await refreshOrdersFirstPage(user.id);
         if (profileRole === 'admin') {
           await loadAdminDashboard();
         }
       } catch (_error) {
         if (isInvalidRefreshTokenError(_error)) {
           await clearLocalSupabaseSession();
-          router.replace({ pathname: '/login', params: { refresh: String(Date.now()) } });
+          routerRef.current?.replace?.({ pathname: '/login', params: { refresh: String(Date.now()) } });
           return;
         }
         setFullName('No disponible');
@@ -317,7 +326,8 @@ export default function Perfil() {
         if (showLoader) setLoading(false);
       }
     },
-    [loadAdminDashboard, loadOrders, router]
+    // Keep bootstrap deps stable to avoid repeated load loops.
+    [loadAdminDashboard, refreshOrdersFirstPage]
   );
 
   useEffect(() => {
@@ -850,7 +860,7 @@ export default function Perfil() {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: role === 'admin' ? 'Panel Admin' : 'Mi Perfil' }} />
+      <Stack.Screen options={perfilScreenOptions} />
       {loading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={COLORS.primary} />

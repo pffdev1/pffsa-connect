@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { FlatList, Text, useWindowDimensions, View, StyleSheet } from 'react-native';
+import { FlatList, Platform, Text, useWindowDimensions, View, StyleSheet } from 'react-native';
 import ProductCard from './ProductCard';
 import { COLORS } from '../constants/theme';
 
@@ -51,6 +51,7 @@ export default function ProductGrid({
   return (
     <FlatList
       data={data}
+      extraData={selectedItemCodes}
       key={numColumns}
       numColumns={numColumns}
       keyExtractor={keyExtractor}
@@ -61,7 +62,7 @@ export default function ProductGrid({
       maxToRenderPerBatch={8}
       updateCellsBatchingPeriod={50}
       windowSize={7}
-      removeClippedSubviews
+      removeClippedSubviews={Platform.OS === 'android' ? false : true}
       onEndReachedThreshold={0.35}
       onEndReached={onEndReached}
       refreshing={refreshing}
