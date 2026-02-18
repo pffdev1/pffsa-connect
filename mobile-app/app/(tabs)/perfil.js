@@ -1,10 +1,19 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, FlatList } from 'react-native';
 import { Stack, useFocusEffect } from 'expo-router';
+import * as Linking from 'expo-linking';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { ActivityIndicator, Button, Card, HelperText, SegmentedButtons, TextInput } from 'react-native-paper';
+import {
+  ActivityIndicator,
+  Button,
+  Card,
+  HelperText,
+  SegmentedButtons,
+  Surface,
+  TextInput
+} from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../src/services/supabaseClient';
 import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
@@ -32,6 +41,28 @@ const normalizeSellerName = (value = '') =>
     .toUpperCase();
 
 const ORDERS_PAGE_SIZE = 12;
+const ADMIN_VISIBLE_SELLERS = 5;
+
+const resolveOrderStatus = (status = '') => {
+  const normalized = String(status).trim().toLowerCase();
+  if (normalized === 'sent') return { label: 'Enviado', color: '#27AE60' };
+  if (normalized === 'pending') return { label: 'Pendiente', color: '#F39C12' };
+  if (normalized === 'error') return { label: 'Con error', color: '#E74C3C' };
+  return { label: status || 'Sin estado', color: COLORS.textLight };
+};
+
+const formatDateTime = (value) => {
+  if (!value) return 'Sin fecha';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 'Sin fecha';
+  return parsed.toLocaleString('es-PA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
 
 export default function Perfil() {
   const [loading, setLoading] = useState(true);
@@ -49,6 +80,15 @@ export default function Perfil() {
   const [savingPassword, setSavingPassword] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  const [adminTab, setAdminTab] = useState('equipo');
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminError, setAdminError] = useState('');
+  const [adminResettingSellerId, setAdminResettingSellerId] = useState('');
+  const [sellerRows, setSellerRows] = useState([]);
+  const [sellerSearch, setSellerSearch] = useState('');
+  const [showAllSellers, setShowAllSellers] = useState(false);
+
   const {
     control,
     handleSubmit,
@@ -59,26 +99,46 @@ export default function Perfil() {
     defaultValues: { newPassword: '', confirmPassword: '' }
   });
 
-  const formatDateTime = (value) => {
-    if (!value) return 'Sin fecha';
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return 'Sin fecha';
-    return parsed.toLocaleString('es-PA', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+  const resetRedirectTo = useMemo(() => Linking.createURL('reset-password'), []);
 
-  const resolveOrderStatus = (status = '') => {
-    const normalized = String(status).trim().toLowerCase();
-    if (normalized === 'sent') return { label: 'Enviado', color: '#27AE60' };
-    if (normalized === 'pending') return { label: 'Pendiente', color: '#F39C12' };
-    if (normalized === 'error') return { label: 'Con error', color: '#E74C3C' };
-    return { label: status || 'Sin estado', color: COLORS.textLight };
-  };
+  const normalizeSellerRow = useCallback((row) => {
+    const sellerId = String(row?.seller_id || row?.id || '').trim();
+    return {
+      id: sellerId,
+      fullName: String(row?.full_name || '').trim() || 'Sin nombre',
+      email: String(row?.email || '').trim().toLowerCase(),
+      ordersCount: Number(row?.orders_count) || 0,
+      sentCount: Number(row?.sent_count) || 0,
+      pendingCount: Number(row?.pending_count) || 0,
+      errorCount: Number(row?.error_count) || 0,
+      lastSeen: row?.last_seen || row?.last_order_at || '',
+      raw: row
+    };
+  }, []);
+
+  const loadAdminDashboard = useCallback(async () => {
+    try {
+      setAdminLoading(true);
+      setAdminError('');
+      const { data: statsRows, error: statsError } = await supabase.rpc('get_admin_seller_stats');
+      if (statsError) throw statsError;
+
+      const normalizedRows = (statsRows || [])
+        .map((row) => normalizeSellerRow(row))
+        .filter((row) => row.id)
+        .sort((a, b) => a.fullName.localeCompare(b.fullName));
+
+      setSellerRows(normalizedRows);
+      setAdminError('');
+      setShowAllSellers(false);
+    } catch (error) {
+      console.error('admin dashboard load failed:', error);
+      setSellerRows([]);
+      setAdminError('No se pudo cargar el panel de vendedores.');
+    } finally {
+      setAdminLoading(false);
+    }
+  }, [normalizeSellerRow]);
 
   const refreshOrdersFirstPage = useCallback(async (userId) => {
     if (!userId) return;
@@ -107,104 +167,112 @@ export default function Perfil() {
     }
   }, []);
 
-  const loadOrders = async (userId, { reset = false } = {}) => {
-    if (!userId) return;
-    if (reset) {
-      await refreshOrdersFirstPage(userId);
-      return;
-    }
-    if (!reset && (loadingMoreOrders || !hasMoreOrders)) return;
+  const loadOrders = useCallback(
+    async (userId, { reset: shouldReset = false } = {}) => {
+      if (!userId) return;
+      if (shouldReset) {
+        await refreshOrdersFirstPage(userId);
+        return;
+      }
+      if (loadingMoreOrders || !hasMoreOrders) return;
 
-    try {
-      if (reset) setOrdersLoading(true);
-      if (!reset) setLoadingMoreOrders(true);
-      const from = reset ? 0 : ordersNextFrom;
-      const to = from + ORDERS_PAGE_SIZE - 1;
+      try {
+        setLoadingMoreOrders(true);
+        const from = ordersNextFrom;
+        const to = from + ORDERS_PAGE_SIZE - 1;
 
-      const { data: orders, error: ordersError } = await supabase
-        .from('sales_orders')
-        .select('id, card_code, status, sap_docnum, created_at, doc_due_date')
-        .eq('created_by', userId)
-        .order('created_at', { ascending: false })
-        .range(from, to);
+        const { data: orders, error: ordersError } = await supabase
+          .from('sales_orders')
+          .select('id, card_code, status, sap_docnum, created_at, doc_due_date')
+          .eq('created_by', userId)
+          .order('created_at', { ascending: false })
+          .range(from, to);
 
-      if (ordersError) throw ordersError;
+        if (ordersError) throw ordersError;
 
-      const rows = orders || [];
-      setRecentOrders((prev) => (reset ? rows : [...prev, ...rows]));
-      setHasMoreOrders(rows.length === ORDERS_PAGE_SIZE);
-      setOrdersNextFrom(from + rows.length);
-    } catch (_error) {
-      if (reset) {
+        const rows = orders || [];
+        setRecentOrders((prev) => [...prev, ...rows]);
+        setHasMoreOrders(rows.length === ORDERS_PAGE_SIZE);
+        setOrdersNextFrom(from + rows.length);
+      } catch (_error) {
+        // Keep previous state if pagination fails.
+      } finally {
+        setLoadingMoreOrders(false);
+      }
+    },
+    [hasMoreOrders, loadingMoreOrders, ordersNextFrom, refreshOrdersFirstPage]
+  );
+
+  const loadPerfil = useCallback(
+    async ({ showLoader = true } = {}) => {
+      try {
+        if (showLoader) setLoading(true);
+        const {
+          data: { user },
+          error: userError
+        } = await supabase.auth.getUser();
+
+        if (userError || !user?.id) throw new Error('Sin sesion');
+        setAuthUserId(user.id);
+
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('full_name, role')
+          .eq('id', user.id)
+          .single();
+
+        if (profileError) throw profileError;
+
+        const profileName = (profile?.full_name || '').trim();
+        const profileRole = (profile?.role || 'vendedor').trim().toLowerCase();
+        setFullName(profileName);
+        setRole(profileRole);
+
+        let countQuery = supabase.from('customers').select('*', { count: 'exact', head: true }).not('Nivel', 'ilike', 'EMPLEADOS');
+
+        if (profileRole !== 'admin') {
+          countQuery = countQuery.eq('Vendedor', normalizeSellerName(profileName));
+        }
+
+        const { count, error: countError } = await countQuery;
+        if (countError) throw countError;
+        setClientesCount(count || 0);
+
+        if (profileRole === 'admin') {
+          await loadAdminDashboard();
+        } else {
+          await loadOrders(user.id, { reset: true });
+        }
+      } catch (_error) {
+        setFullName('No disponible');
+        setRole('vendedor');
+        setClientesCount(0);
         setRecentOrders([]);
         setHasMoreOrders(false);
         setOrdersNextFrom(0);
+        setSellerRows([]);
+        setAdminError('No se pudo cargar el panel de administracion.');
+      } finally {
+        if (showLoader) setLoading(false);
       }
-    } finally {
-      if (reset) setOrdersLoading(false);
-      if (!reset) setLoadingMoreOrders(false);
-    }
-  };
-
-  const loadPerfil = async ({ showLoader = true } = {}) => {
-    try {
-      if (showLoader) setLoading(true);
-      const {
-        data: { user },
-        error: userError
-      } = await supabase.auth.getUser();
-
-      if (userError || !user?.id) throw new Error('Sin sesion');
-      setAuthUserId(user.id);
-
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('full_name, role')
-        .eq('id', user.id)
-        .single();
-
-      if (profileError) throw profileError;
-
-      const profileName = (profile?.full_name || '').trim();
-      const profileRole = (profile?.role || 'vendedor').trim().toLowerCase();
-      setFullName(profileName);
-      setRole(profileRole);
-
-      let countQuery = supabase.from('customers').select('*', { count: 'exact', head: true }).not('Nivel', 'ilike', 'EMPLEADOS');
-
-      if (profileRole !== 'admin') {
-        countQuery = countQuery.eq('Vendedor', normalizeSellerName(profileName));
-      }
-
-      const { count, error: countError } = await countQuery;
-      if (countError) throw countError;
-      setClientesCount(count || 0);
-      if (showLoader) setLoading(false);
-      loadOrders(user.id, { reset: true });
-    } catch (_error) {
-      setFullName('No disponible');
-      setRole('vendedor');
-      setClientesCount(0);
-      setRecentOrders([]);
-      setHasMoreOrders(false);
-      setOrdersNextFrom(0);
-      if (showLoader) setLoading(false);
-    } finally {
-      // no-op: loading handled explicitly to avoid hiding orders skeletons.
-    }
-  };
+    },
+    [loadAdminDashboard, loadOrders]
+  );
 
   useEffect(() => {
     loadPerfil();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadPerfil]);
 
   useFocusEffect(
     useCallback(() => {
       if (!authUserId) return undefined;
+      if (role === 'admin') {
+        loadAdminDashboard();
+        return undefined;
+      }
       refreshOrdersFirstPage(authUserId);
       return undefined;
-    }, [authUserId, refreshOrdersFirstPage])
+    }, [authUserId, role, loadAdminDashboard, refreshOrdersFirstPage])
   );
 
   const handleRefresh = async () => {
@@ -233,9 +301,310 @@ export default function Perfil() {
     }
   });
 
+  const handleSendSellerReset = async (seller) => {
+    try {
+      setAdminResettingSellerId(seller.id);
+      const email = String(seller?.email || '').trim().toLowerCase();
+      if (!email) {
+        throw new Error('Este vendedor no tiene correo en profiles.email para enviar cambio de clave.');
+      }
+
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: resetRedirectTo
+      });
+      if (error) throw error;
+      alert(`Se envio enlace de cambio de clave a ${email}.`);
+    } catch (error) {
+      alert(error.message || 'No se pudo enviar el enlace de cambio de clave.');
+    } finally {
+      setAdminResettingSellerId('');
+    }
+  };
+
+  const renderSecurityForm = () => (
+    <>
+      <Text style={styles.sectionTitle}>Seguridad</Text>
+      <Controller
+        control={control}
+        name="newPassword"
+        render={({ field: { onChange, onBlur, value } }) => (
+          <TextInput
+            mode="outlined"
+            label="Nueva contrasena"
+            placeholder="Minimo 6 caracteres"
+            secureTextEntry={!showPassword}
+            value={value}
+            onBlur={onBlur}
+            onChangeText={onChange}
+            error={Boolean(errors.newPassword)}
+            outlineColor={COLORS.border}
+            activeOutlineColor={COLORS.primary}
+            textColor={COLORS.text}
+            style={styles.paperInput}
+            right={<TextInput.Icon icon={showPassword ? 'eye-off' : 'eye'} onPress={() => setShowPassword((prev) => !prev)} />}
+          />
+        )}
+      />
+      <HelperText type="error" visible={Boolean(errors.newPassword)} style={styles.helperText}>
+        {errors.newPassword?.message}
+      </HelperText>
+
+      <Controller
+        control={control}
+        name="confirmPassword"
+        render={({ field: { onChange, onBlur, value } }) => (
+          <TextInput
+            mode="outlined"
+            label="Confirmar contrasena"
+            placeholder="Repite la contrasena"
+            secureTextEntry={!showConfirmPassword}
+            value={value}
+            onBlur={onBlur}
+            onChangeText={onChange}
+            error={Boolean(errors.confirmPassword)}
+            outlineColor={COLORS.border}
+            activeOutlineColor={COLORS.primary}
+            textColor={COLORS.text}
+            style={styles.paperInput}
+            right={
+              <TextInput.Icon
+                icon={showConfirmPassword ? 'eye-off' : 'eye'}
+                onPress={() => setShowConfirmPassword((prev) => !prev)}
+              />
+            }
+          />
+        )}
+      />
+      <HelperText type="error" visible={Boolean(errors.confirmPassword)} style={styles.helperText}>
+        {errors.confirmPassword?.message}
+      </HelperText>
+
+      <Button
+        mode="contained"
+        buttonColor={COLORS.primary}
+        style={styles.submitButton}
+        loading={savingPassword}
+        disabled={savingPassword}
+        onPress={handleChangePassword}
+      >
+        ACTUALIZAR CONTRASENA
+      </Button>
+    </>
+  );
+
+  const renderVendedorView = () => (
+    <>
+      <View style={styles.row}>
+        <Text style={styles.label}>Rol</Text>
+        <Text style={styles.value}>{role === 'admin' ? 'Admin' : 'Vendedor'}</Text>
+      </View>
+      <View style={styles.row}>
+        <Text style={styles.label}>Clientes Asignados</Text>
+        <Text style={styles.value}>{clientesCount}</Text>
+      </View>
+
+      <SegmentedButtons
+        value={activeTab}
+        onValueChange={setActiveTab}
+        style={styles.tabs}
+        buttons={[
+          { value: 'pedidos', label: 'Pedidos', icon: 'receipt-text-outline' },
+          { value: 'seguridad', label: 'Seguridad', icon: 'shield-lock-outline' }
+        ]}
+      />
+
+      {activeTab === 'pedidos' ? (
+        <>
+          <Text style={styles.sectionTitle}>Mis ultimos pedidos</Text>
+          {ordersLoading ? (
+            <View style={styles.ordersList}>
+              {Array.from({ length: 4 }).map((_, idx) => (
+                <View key={`order-skeleton-${idx}`} style={styles.orderSkeletonRow}>
+                  <View style={styles.orderSkeletonLineLg} />
+                  <View style={styles.orderSkeletonLineMd} />
+                  <View style={styles.orderSkeletonLineSm} />
+                </View>
+              ))}
+            </View>
+          ) : recentOrders.length === 0 ? (
+            <Text style={styles.ordersEmpty}>Aun no hay pedidos recientes.</Text>
+          ) : (
+            <View style={styles.ordersList}>
+              {recentOrders.map((order) => {
+                const statusInfo = resolveOrderStatus(order?.status);
+                return (
+                  <View key={order.id} style={styles.orderRow}>
+                    <View style={styles.orderMain}>
+                      <Text style={styles.orderTitle}>
+                        {order?.sap_docnum ? `Pedido SAP #${order.sap_docnum}` : `Pedido ${order?.id?.slice(0, 8) || ''}`}
+                      </Text>
+                      <Text style={styles.orderMeta}>
+                        Cliente: {order?.card_code || 'N/A'} | Entrega: {order?.doc_due_date || 'N/A'}
+                      </Text>
+                      <Text style={styles.orderDate}>{formatDateTime(order?.created_at)}</Text>
+                    </View>
+                    <View style={[styles.statusPill, { backgroundColor: `${statusInfo.color}22` }]}>
+                      <Text style={[styles.statusPillText, { color: statusInfo.color }]}>{statusInfo.label}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+          {hasMoreOrders && (
+            <Button
+              mode="outlined"
+              style={styles.loadMoreButton}
+              loading={loadingMoreOrders}
+              disabled={loadingMoreOrders}
+              onPress={handleLoadMoreOrders}
+            >
+              CARGAR MAS
+            </Button>
+          )}
+        </>
+      ) : (
+        renderSecurityForm()
+      )}
+    </>
+  );
+
+  const renderAdminSkeleton = () => (
+    <View style={styles.adminListWrap}>
+      {Array.from({ length: 4 }).map((_, idx) => (
+        <View key={`seller-skeleton-${idx}`} style={styles.adminSkeletonCard}>
+          <View style={styles.adminSkeletonLg} />
+          <View style={styles.adminSkeletonSm} />
+          <View style={styles.adminSkeletonStatsRow}>
+            <View style={styles.adminSkeletonStat} />
+            <View style={styles.adminSkeletonStat} />
+            <View style={styles.adminSkeletonStat} />
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+
+  const normalizedSellerSearch = sellerSearch.trim().toLowerCase();
+  const filteredSellerRows = sellerRows.filter((seller) => {
+    if (!normalizedSellerSearch) return true;
+    return (
+      String(seller.fullName || '')
+        .toLowerCase()
+        .includes(normalizedSellerSearch) ||
+      String(seller.email || '')
+        .toLowerCase()
+        .includes(normalizedSellerSearch)
+    );
+  });
+  const visibleSellerRows = showAllSellers ? filteredSellerRows : filteredSellerRows.slice(0, ADMIN_VISIBLE_SELLERS);
+  const hasHiddenSellers = filteredSellerRows.length > ADMIN_VISIBLE_SELLERS;
+
+  const renderAdminView = () => (
+    <>
+      <View style={styles.row}>
+        <Text style={styles.label}>Rol</Text>
+        <Text style={styles.value}>Admin</Text>
+      </View>
+      <View style={styles.row}>
+        <Text style={styles.label}>Clientes Totales</Text>
+        <Text style={styles.value}>{clientesCount}</Text>
+      </View>
+
+      <SegmentedButtons
+        value={adminTab}
+        onValueChange={setAdminTab}
+        style={styles.tabs}
+        buttons={[
+          { value: 'equipo', label: 'Vendedores', icon: 'account-group-outline' },
+          { value: 'seguridad', label: 'Mi Seguridad', icon: 'shield-lock-outline' }
+        ]}
+      />
+
+      {adminTab === 'equipo' ? (
+        <>
+          <Text style={styles.sectionTitle}>Gestion de vendedores</Text>
+          <TextInput
+            mode="outlined"
+            placeholder="Buscar vendedor por nombre o correo"
+            value={sellerSearch}
+            onChangeText={setSellerSearch}
+            outlineColor={COLORS.border}
+            activeOutlineColor={COLORS.primary}
+            textColor={COLORS.text}
+            style={styles.adminSearchInput}
+            left={<TextInput.Icon icon="magnify" />}
+          />
+          {adminLoading ? (
+            renderAdminSkeleton()
+          ) : adminError ? (
+            <Text style={styles.ordersEmpty}>{adminError}</Text>
+          ) : filteredSellerRows.length === 0 ? (
+            <Text style={styles.ordersEmpty}>No hay vendedores para mostrar.</Text>
+          ) : (
+            <View style={styles.adminListWrap}>
+              <FlatList
+                data={visibleSellerRows}
+                keyExtractor={(item) => item.id}
+                scrollEnabled={false}
+                renderItem={({ item: seller }) => {
+                  const isResetting = adminResettingSellerId === seller.id;
+
+                  return (
+                    <Surface style={styles.sellerCard} elevation={1}>
+                      <View style={styles.sellerHeader}>
+                        <View style={styles.sellerTitleWrap}>
+                          <Text style={styles.sellerName}>{seller.fullName}</Text>
+                          <Text style={styles.sellerEmail}>{seller.email || seller.id}</Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.sellerMetricsRow}>
+                        <View style={styles.metricBox}>
+                          <Text style={styles.metricLabel}>Pedidos</Text>
+                          <Text style={styles.metricValue}>{seller.ordersCount}</Text>
+                        </View>
+                        <View style={styles.metricBox}>
+                          <Text style={styles.metricLabel}>Enviados</Text>
+                          <Text style={styles.metricValue}>{seller.sentCount}</Text>
+                        </View>
+                      </View>
+
+                      <Text style={styles.sellerLastSeen}>Ultimo pedido: {formatDateTime(seller.lastSeen)}</Text>
+
+                      <View style={styles.sellerActions}>
+                        <Button
+                          mode="outlined"
+                          icon="lock-reset"
+                          loading={isResetting}
+                          disabled={isResetting}
+                          style={styles.sellerResetButton}
+                          onPress={() => handleSendSellerReset(seller)}
+                        >
+                          Cambiar clave
+                        </Button>
+                      </View>
+                    </Surface>
+                  );
+                }}
+              />
+              {hasHiddenSellers && (
+                <Button mode="text" compact onPress={() => setShowAllSellers((prev) => !prev)}>
+                  {showAllSellers ? 'Ver menos' : `Ver mas (${filteredSellerRows.length - ADMIN_VISIBLE_SELLERS})`}
+                </Button>
+              )}
+            </View>
+          )}
+        </>
+      ) : (
+        renderSecurityForm()
+      )}
+    </>
+  );
+
   return (
     <View style={styles.container}>
-      <Stack.Screen options={{ title: 'Mi Perfil' }} />
+      <Stack.Screen options={{ title: role === 'admin' ? 'Panel Admin' : 'Mi Perfil' }} />
       {loading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={COLORS.primary} />
@@ -249,151 +618,11 @@ export default function Perfil() {
           <Card style={[styles.card, GLOBAL_STYLES.shadow]} mode="contained">
             <Card.Content>
               <View style={styles.header}>
-                <Ionicons name="person-circle" size={58} color={COLORS.primary} />
+                <Ionicons name={role === 'admin' ? 'shield-checkmark' : 'person-circle'} size={58} color={COLORS.primary} />
                 <Text style={styles.name}>{fullName || 'Sin nombre'}</Text>
               </View>
 
-              <View style={styles.row}>
-                <Text style={styles.label}>Rol</Text>
-                <Text style={styles.value}>{role === 'admin' ? 'Admin' : 'Vendedor'}</Text>
-              </View>
-              <View style={styles.row}>
-                <Text style={styles.label}>Clientes Asignados</Text>
-                <Text style={styles.value}>{clientesCount}</Text>
-              </View>
-
-              <SegmentedButtons
-                value={activeTab}
-                onValueChange={setActiveTab}
-                style={styles.tabs}
-                buttons={[
-                  { value: 'pedidos', label: 'Pedidos', icon: 'receipt-text-outline' },
-                  { value: 'seguridad', label: 'Seguridad', icon: 'shield-lock-outline' }
-                ]}
-              />
-
-              {activeTab === 'pedidos' ? (
-                <>
-                  <Text style={styles.sectionTitle}>Mis ultimos pedidos</Text>
-                  {ordersLoading ? (
-                    <View style={styles.ordersList}>
-                      {Array.from({ length: 4 }).map((_, idx) => (
-                        <View key={`order-skeleton-${idx}`} style={styles.orderSkeletonRow}>
-                          <View style={styles.orderSkeletonLineLg} />
-                          <View style={styles.orderSkeletonLineMd} />
-                          <View style={styles.orderSkeletonLineSm} />
-                        </View>
-                      ))}
-                    </View>
-                  ) : recentOrders.length === 0 ? (
-                    <Text style={styles.ordersEmpty}>Aun no hay pedidos recientes.</Text>
-                  ) : (
-                    <View style={styles.ordersList}>
-                      {recentOrders.map((order) => {
-                        const statusInfo = resolveOrderStatus(order?.status);
-                        return (
-                          <View key={order.id} style={styles.orderRow}>
-                            <View style={styles.orderMain}>
-                              <Text style={styles.orderTitle}>
-                                {order?.sap_docnum ? `Pedido SAP #${order.sap_docnum}` : `Pedido ${order?.id?.slice(0, 8) || ''}`}
-                              </Text>
-                              <Text style={styles.orderMeta}>
-                                Cliente: {order?.card_code || 'N/A'} | Entrega: {order?.doc_due_date || 'N/A'}
-                              </Text>
-                              <Text style={styles.orderDate}>{formatDateTime(order?.created_at)}</Text>
-                            </View>
-                            <View style={[styles.statusPill, { backgroundColor: `${statusInfo.color}22` }]}>
-                              <Text style={[styles.statusPillText, { color: statusInfo.color }]}>{statusInfo.label}</Text>
-                            </View>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  )}
-                  {hasMoreOrders && (
-                    <Button
-                      mode="outlined"
-                      style={styles.loadMoreButton}
-                      loading={loadingMoreOrders}
-                      disabled={loadingMoreOrders}
-                      onPress={handleLoadMoreOrders}
-                    >
-                      CARGAR MAS
-                    </Button>
-                  )}
-                </>
-              ) : (
-                <>
-                  <Text style={styles.sectionTitle}>Seguridad</Text>
-                  <Controller
-                    control={control}
-                    name="newPassword"
-                    render={({ field: { onChange, onBlur, value } }) => (
-                      <TextInput
-                        mode="outlined"
-                        label="Nueva contrasena"
-                        placeholder="Minimo 6 caracteres"
-                        secureTextEntry={!showPassword}
-                        value={value}
-                        onBlur={onBlur}
-                        onChangeText={onChange}
-                        error={Boolean(errors.newPassword)}
-                        outlineColor={COLORS.border}
-                        activeOutlineColor={COLORS.primary}
-                        textColor={COLORS.text}
-                        style={styles.paperInput}
-                        right={
-                          <TextInput.Icon icon={showPassword ? 'eye-off' : 'eye'} onPress={() => setShowPassword((prev) => !prev)} />
-                        }
-                      />
-                    )}
-                  />
-                  <HelperText type="error" visible={Boolean(errors.newPassword)} style={styles.helperText}>
-                    {errors.newPassword?.message}
-                  </HelperText>
-
-                  <Controller
-                    control={control}
-                    name="confirmPassword"
-                    render={({ field: { onChange, onBlur, value } }) => (
-                      <TextInput
-                        mode="outlined"
-                        label="Confirmar contrasena"
-                        placeholder="Repite la contrasena"
-                        secureTextEntry={!showConfirmPassword}
-                        value={value}
-                        onBlur={onBlur}
-                        onChangeText={onChange}
-                        error={Boolean(errors.confirmPassword)}
-                        outlineColor={COLORS.border}
-                        activeOutlineColor={COLORS.primary}
-                        textColor={COLORS.text}
-                        style={styles.paperInput}
-                        right={
-                          <TextInput.Icon
-                            icon={showConfirmPassword ? 'eye-off' : 'eye'}
-                            onPress={() => setShowConfirmPassword((prev) => !prev)}
-                          />
-                        }
-                      />
-                    )}
-                  />
-                  <HelperText type="error" visible={Boolean(errors.confirmPassword)} style={styles.helperText}>
-                    {errors.confirmPassword?.message}
-                  </HelperText>
-
-                  <Button
-                    mode="contained"
-                    buttonColor={COLORS.primary}
-                    style={styles.submitButton}
-                    loading={savingPassword}
-                    disabled={savingPassword}
-                    onPress={handleChangePassword}
-                  >
-                    ACTUALIZAR CONTRASENA
-                  </Button>
-                </>
-              )}
+              {role === 'admin' ? renderAdminView() : renderVendedorView()}
             </Card.Content>
           </Card>
         </ScrollView>
@@ -472,5 +701,47 @@ const styles = StyleSheet.create({
   loadMoreButton: { marginTop: 4, borderRadius: 8 },
   paperInput: { backgroundColor: COLORS.white },
   helperText: { marginTop: 2, marginBottom: 0, paddingHorizontal: 0 },
-  submitButton: { marginTop: 12, borderRadius: 10 }
+  submitButton: { marginTop: 12, borderRadius: 10 },
+
+  adminSearchInput: { marginTop: 8, backgroundColor: '#FFF' },
+
+  adminListWrap: { gap: 10, marginTop: 8 },
+  sellerCard: {
+    borderRadius: 14,
+    backgroundColor: '#FFF',
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E9EEF6'
+  },
+  sellerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  sellerTitleWrap: { flex: 1, marginRight: 10 },
+  sellerName: { color: COLORS.text, fontSize: 15, fontWeight: '700' },
+  sellerEmail: { marginTop: 2, color: COLORS.textLight, fontSize: 12 },
+
+  sellerMetricsRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, marginTop: 10 },
+  metricBox: {
+    width: '48%',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: '#F7FAFF',
+    borderWidth: 1,
+    borderColor: '#E7EEF8'
+  },
+  metricLabel: { color: COLORS.textLight, fontSize: 11, fontWeight: '600' },
+  metricValue: { color: COLORS.primary, fontSize: 13, fontWeight: '800', marginTop: 2 },
+  sellerLastSeen: { marginTop: 10, color: COLORS.textLight, fontSize: 11 },
+  sellerActions: { marginTop: 10 },
+  sellerResetButton: { alignSelf: 'stretch' },
+
+  adminSkeletonCard: {
+    borderWidth: 1,
+    borderColor: '#EEF1F4',
+    borderRadius: 12,
+    padding: 12
+  },
+  adminSkeletonLg: { width: '52%', height: 12, borderRadius: 8, backgroundColor: '#EEF1F4' },
+  adminSkeletonSm: { marginTop: 8, width: '38%', height: 10, borderRadius: 8, backgroundColor: '#EEF1F4' },
+  adminSkeletonStatsRow: { marginTop: 10, flexDirection: 'row', gap: 8 },
+  adminSkeletonStat: { flex: 1, height: 34, borderRadius: 10, backgroundColor: '#EEF1F4' }
 });
