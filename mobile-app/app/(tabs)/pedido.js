@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Button, Card, IconButton } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
@@ -17,6 +18,8 @@ const WAREHOUSE_OPTIONS = [
 ];
 const SAP_DOCNUM_POLL_ATTEMPTS = 7;
 const SAP_DOCNUM_POLL_DELAY_MS = 700;
+const PRODUCT_FALLBACK_IMAGE =
+  'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=300&q=80';
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const formatDateToISO = (date) => {
   const year = date.getFullYear();
@@ -42,6 +45,11 @@ const getToday = () => {
   today.setHours(0, 0, 0, 0);
   return today;
 };
+const resolveCartImageUrl = (item) => {
+  const rawUrl = item?.Url ?? item?.url ?? item?.image_url;
+  const safeUrl = String(rawUrl || '').trim();
+  return safeUrl || PRODUCT_FALLBACK_IMAGE;
+};
 
 export default function Pedido() {
   const router = useRouter();
@@ -52,6 +60,13 @@ export default function Pedido() {
   const [selectedWarehouse, setSelectedWarehouse] = useState('100');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [submittingOrder, setSubmittingOrder] = useState(false);
+  const cartCardCodes = useMemo(
+    () => Array.from(new Set(cart.map((item) => String(item?.CardCode || '').trim()).filter(Boolean))),
+    [cart]
+  );
+  const hasMixedClients = cartCardCodes.length > 1;
+  const orderCustomerCode = cartCardCodes[0] || '';
+  const orderCustomerName = String(cart?.[0]?.CustomerName || cart?.[0]?.CardName || '').trim();
   const openSessionExpiredAlert = () => {
     setCheckoutModalVisible(false);
     setShowDatePicker(false);
@@ -92,24 +107,25 @@ export default function Pedido() {
     setQuantityDrafts((prev) => {
       const next = {};
       cart.forEach((item) => {
-        next[item.ItemCode] = prev[item.ItemCode] ?? formatQuantity(item.quantity);
+        const key = item.cartKey || item.ItemCode;
+        next[key] = prev[key] ?? formatQuantity(item.quantity);
       });
       return next;
     });
   }, [cart]);
 
-  const commitDraftQuantity = (itemCode, fallbackQuantity) => {
-    const raw = String(quantityDrafts[itemCode] ?? '').replace(',', '.');
+  const commitDraftQuantity = (identifier, fallbackQuantity) => {
+    const raw = String(quantityDrafts[identifier] ?? '').replace(',', '.');
     const parsed = Number(raw);
     const normalized = Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 1000) / 1000 : null;
 
     if (normalized === null) {
-      setQuantityDrafts((prev) => ({ ...prev, [itemCode]: formatQuantity(fallbackQuantity) }));
+      setQuantityDrafts((prev) => ({ ...prev, [identifier]: formatQuantity(fallbackQuantity) }));
       return;
     }
 
-    updateCartItemQuantity(itemCode, normalized);
-    setQuantityDrafts((prev) => ({ ...prev, [itemCode]: formatQuantity(normalized) }));
+    updateCartItemQuantity(identifier, normalized);
+    setQuantityDrafts((prev) => ({ ...prev, [identifier]: formatQuantity(normalized) }));
   };
 
   const handleConfirmarPedido = async () => {
@@ -118,8 +134,13 @@ export default function Pedido() {
       return;
     }
 
+    const cardCodes = cartCardCodes;
+    if (cardCodes.length > 1) {
+      Alert.alert('Carrito invalido', 'El carrito contiene productos de distintos clientes. Limpia el carrito y vuelve a intentarlo.');
+      return;
+    }
+
     try {
-      const cardCodes = Array.from(new Set(cart.map((item) => String(item?.CardCode || '').trim()).filter(Boolean)));
       if (cardCodes.length > 0) {
         const { data, error } = await supabase
           .from('customers')
@@ -170,6 +191,12 @@ export default function Pedido() {
 
     const firstItem = cart?.[0] || {};
     const safeCardCode = String(firstItem.CardCode || '').trim();
+    const uniqueCardCodes = Array.from(new Set(cart.map((item) => String(item?.CardCode || '').trim()).filter(Boolean)));
+    if (uniqueCardCodes.length !== 1 || uniqueCardCodes[0] !== safeCardCode) {
+      Alert.alert('Carrito invalido', 'Todos los productos del carrito deben pertenecer al mismo cliente.');
+      return;
+    }
+
     if (!safeCardCode) {
       Alert.alert('Datos incompletos', 'No se encontro CardCode en el carrito. Vuelve a seleccionar cliente.');
       return;
@@ -211,7 +238,7 @@ export default function Pedido() {
         if (!resolvedZona || !resolvedIdRuta) {
           const { data: customerMeta, error: customerMetaError } = await supabase
             .from('customers')
-            .select('Zona, IDRuta, IdRuta, Ruta')
+            .select('Zona, IDRuta, Ruta')
             .eq('CardCode', safeCardCode)
             .single();
 
@@ -280,7 +307,7 @@ export default function Pedido() {
             ? `Pedido ${sapDocNum} guardado exitosamente. Puedes validar todos tus pedidos desde tu perfil.`
             : 'Pedido guardado exitosamente. Puedes validar el status de SAP desde tu perfil.'
         );
-        router.replace('/clientes');
+        router.replace({ pathname: '/clientes', params: { orderCompleted: String(Date.now()) } });
       } catch (error) {
         console.error('create_sales_order rpc failed', error);
         const rawErrorText = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
@@ -357,9 +384,14 @@ export default function Pedido() {
     setShowDatePicker(true);
   };
 
-  const renderItem = ({ item }) => (
-    <Card style={[styles.cartItem, GLOBAL_STYLES.shadow]} mode="contained">
+  const renderItem = ({ item }) => {
+    const itemKey = item.cartKey || item.ItemCode;
+    return (
+      <Card style={[styles.cartItem, GLOBAL_STYLES.shadow]} mode="contained">
       <Card.Content style={styles.itemContent}>
+        <View style={styles.itemThumbWrap}>
+          <Image source={{ uri: resolveCartImageUrl(item) }} contentFit="cover" transition={120} style={styles.itemThumbImage} />
+        </View>
         <View style={styles.itemInfo}>
           <Text style={styles.itemName}>{item.ItemName}</Text>
           <Text style={styles.itemPrice}>Unitario: ${parseFloat(item.Price).toFixed(2)}</Text>
@@ -372,19 +404,19 @@ export default function Pedido() {
             size={18}
             style={styles.iconBtn}
             onPress={() => {
-              removeFromCart(item.ItemCode);
-              setQuantityDrafts((prev) => ({ ...prev, [item.ItemCode]: formatQuantity(Math.max(0, item.quantity - 1)) }));
+              removeFromCart(itemKey);
+              setQuantityDrafts((prev) => ({ ...prev, [itemKey]: formatQuantity(Math.max(0, item.quantity - 1)) }));
             }}
           />
           <TextInput
-            value={quantityDrafts[item.ItemCode] ?? formatQuantity(item.quantity)}
+            value={quantityDrafts[itemKey] ?? formatQuantity(item.quantity)}
             onChangeText={(value) =>
               setQuantityDrafts((prev) => ({
                 ...prev,
-                [item.ItemCode]: sanitizeQuantityInput(value)
+                [itemKey]: sanitizeQuantityInput(value)
               }))
             }
-            onBlur={() => commitDraftQuantity(item.ItemCode, item.quantity)}
+            onBlur={() => commitDraftQuantity(itemKey, item.quantity)}
             keyboardType="decimal-pad"
             style={styles.quantityInput}
             maxLength={8}
@@ -395,13 +427,14 @@ export default function Pedido() {
             style={styles.iconBtn}
             onPress={() => {
               addToCart({ ...item, quantity: 1 });
-              setQuantityDrafts((prev) => ({ ...prev, [item.ItemCode]: formatQuantity(item.quantity + 1) }));
+              setQuantityDrafts((prev) => ({ ...prev, [itemKey]: formatQuantity(item.quantity + 1) }));
             }}
           />
         </View>
       </Card.Content>
-    </Card>
-  );
+      </Card>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
@@ -426,7 +459,32 @@ export default function Pedido() {
         </LinearGradient>
       ) : (
         <>
-          <FlatList data={cart} keyExtractor={(item) => item.ItemCode} renderItem={renderItem} contentContainerStyle={styles.listContent} />
+          <View style={[styles.orderTargetCard, hasMixedClients && styles.orderTargetCardError]}>
+            <View style={styles.orderTargetIconWrap}>
+              <Ionicons
+                name={hasMixedClients ? 'warning-outline' : 'business-outline'}
+                size={16}
+                color={hasMixedClients ? '#B00020' : COLORS.primary}
+              />
+            </View>
+            <View style={styles.orderTargetTextWrap}>
+              <Text style={[styles.orderTargetLabel, hasMixedClients && styles.orderTargetLabelError]}>
+                {hasMixedClients ? 'Carrito invalido' : 'Pedido para'}
+              </Text>
+              <Text style={[styles.orderTargetValue, hasMixedClients && styles.orderTargetValueError]}>
+                {hasMixedClients
+                  ? 'Hay productos de distintos clientes.'
+                  : `${orderCustomerName || 'Cliente sin nombre'}${orderCustomerCode ? ` (${orderCustomerCode})` : ''}`}
+              </Text>
+            </View>
+          </View>
+
+          <FlatList
+            data={cart}
+            keyExtractor={(item) => item.cartKey || `${item.CardCode || 'na'}::${item.ItemCode || 'item'}`}
+            renderItem={renderItem}
+            contentContainerStyle={styles.listContent}
+          />
 
           <View style={styles.footer}>
             <View style={styles.totalRow}>
@@ -448,7 +506,13 @@ export default function Pedido() {
               >
                 VACIAR
               </Button>
-              <Button mode="contained" buttonColor={COLORS.primary} style={styles.btnConfirm} onPress={handleConfirmarPedido}>
+              <Button
+                mode="contained"
+                buttonColor={COLORS.primary}
+                style={styles.btnConfirm}
+                disabled={hasMixedClients}
+                onPress={handleConfirmarPedido}
+              >
                 CONFIRMAR
               </Button>
             </View>
@@ -543,12 +607,56 @@ export default function Pedido() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
   listContent: { padding: 15 },
+  orderTargetCard: {
+    marginHorizontal: 15,
+    marginTop: 12,
+    marginBottom: 2,
+    borderWidth: 1,
+    borderColor: '#DDE7F4',
+    borderRadius: 12,
+    backgroundColor: '#F7FBFF',
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  orderTargetCardError: {
+    borderColor: '#F3C5CE',
+    backgroundColor: '#FFF3F5'
+  },
+  orderTargetIconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#EAF2FB',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  orderTargetTextWrap: { marginLeft: 8, flex: 1 },
+  orderTargetLabel: { fontSize: 11, fontWeight: '700', color: COLORS.textLight, textTransform: 'uppercase' },
+  orderTargetLabelError: { color: '#B00020' },
+  orderTargetValue: { marginTop: 1, fontSize: 13, fontWeight: '700', color: COLORS.text },
+  orderTargetValueError: { color: '#B00020' },
   cartItem: {
     backgroundColor: '#FFF',
     borderRadius: 12,
     marginBottom: 10
   },
   itemContent: { flexDirection: 'row', alignItems: 'center' },
+  itemThumbWrap: {
+    width: 58,
+    height: 58,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#F4F7FB',
+    borderWidth: 1,
+    borderColor: '#E4ECF6',
+    marginRight: 10
+  },
+  itemThumbImage: {
+    width: '100%',
+    height: '100%'
+  },
   itemInfo: { flex: 1 },
   itemName: { fontSize: 15, fontWeight: 'bold', color: COLORS.primary },
   itemPrice: { fontSize: 12, color: COLORS.textLight },

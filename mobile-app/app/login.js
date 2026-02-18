@@ -72,14 +72,20 @@ export default function Login() {
   const handleLogin = handleSubmit(async ({ email, password }) => {
     const normalizedEmail = email.trim().toLowerCase();
 
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
+    try {
+      setLoading(true);
+      const { error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
 
-    if (error) {
-      alert('Error: Credenciales invalidas');
-      setLoading(false);
-    } else {
+      if (error) {
+        alert('Error: Credenciales invalidas');
+        return;
+      }
+
       router.replace('/(tabs)/clientes');
+    } catch (_error) {
+      alert('No se pudo iniciar sesion. Intenta nuevamente.');
+    } finally {
+      setLoading(false);
     }
   });
 

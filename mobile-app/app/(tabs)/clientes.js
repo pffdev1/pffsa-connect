@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import { BottomSheetModal, BottomSheetView } from '@gorhom/bottom-sheet';
 import { Avatar, Badge, Button, Chip, Divider, IconButton, Modal, Portal, Searchbar, Surface } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,6 +17,8 @@ const PAGE_SIZE = 50;
 const MAX_UNLOCK_NOTIFICATIONS = 30;
 const MIN_SKELETON_MS = 700;
 const SEARCH_DEBOUNCE_MS = 280;
+const CUSTOMER_SELECT_FIELDS =
+  'CardCode, CardName, CardFName, RUC, DV, Vendedor, Nivel, SubCategoria, TipoCadena, Ruta, Zona, IDRuta, Direccion, DiasEntrega, Horario, Balance, Bloqueado';
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sanitizeSearchTerm = (value = '') =>
   value
@@ -28,6 +31,15 @@ const normalizeSellerName = (value = '') =>
     .replace(/[._-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .toUpperCase();
+const deriveProfileName = (profileRow, authUser) => {
+  const profileFullName = String(profileRow?.full_name || '').trim();
+  if (profileFullName) return profileFullName;
+
+  const metadataFullName = String(authUser?.user_metadata?.full_name || authUser?.user_metadata?.name || '').trim();
+  if (metadataFullName) return metadataFullName;
+
+  return '';
+};
 const buildRealtimeEqFilter = (column, value = '') => {
   const safeValue = String(value || '').trim();
   if (!safeValue) return undefined;
@@ -51,12 +63,14 @@ const matchesSearchTerm = (item, normalizedTerm) => {
 const isClientBlocked = (item) => normalizeSellerName(String(item?.Bloqueado || '')) === 'Y';
 
 export default function Clientes() {
+  const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
   const sheetBottomInset = Math.max(insets.bottom, 12);
   const [clientes, setClientes] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -81,6 +95,7 @@ export default function Clientes() {
     return `clientes:unlock-notifications:${authUserId}`;
   }, [authUserId]);
   const router = useRouter();
+  const { orderCompleted } = useLocalSearchParams();
   const { clearCart } = useCart();
 
   const handleLogout = async () => {
@@ -111,6 +126,11 @@ export default function Clientes() {
   }, [search]);
 
   useEffect(() => {
+    if (!orderCompleted) return;
+    clearCart();
+  }, [orderCompleted, clearCart]);
+
+  useEffect(() => {
     isMounted.current = true;
     (async () => {
       const startedAt = Date.now();
@@ -129,17 +149,17 @@ export default function Clientes() {
           .from('profiles')
           .select('full_name, role')
           .eq('id', user.id)
-          .single();
+          .maybeSingle();
 
-        if (profileError) throw profileError;
+        if (profileError && profileError.code !== 'PGRST116') throw profileError;
 
         const nextProfile = {
-          fullName: (p?.full_name || '').trim(),
+          fullName: deriveProfileName(p, user),
           role: (p?.role || 'vendedor').trim().toLowerCase()
         };
 
         if (nextProfile.role !== 'admin' && !nextProfile.fullName) {
-          throw new Error('Perfil sin nombre de vendedor');
+          throw new Error('Perfil vendedor sin full_name en profiles');
         }
 
         if (!isMounted.current) return;
@@ -150,7 +170,7 @@ export default function Clientes() {
 
         let query = supabase
           .from('customers')
-          .select('*')
+          .select(CUSTOMER_SELECT_FIELDS)
           .not('Nivel', 'ilike', 'EMPLEADOS')
           .order('CardName', { ascending: true })
           .order('CardCode', { ascending: true })
@@ -173,9 +193,22 @@ export default function Clientes() {
         const nuevos = data || [];
         setClientes(nuevos);
         setHasMore(nuevos.length === PAGE_SIZE);
-      } catch (_error) {
+      } catch (error) {
         if (!isMounted.current) return;
-        setErrorMsg('No se pudo cargar tu perfil. Contacta a IT.');
+        const rawMessage = String(error?.message || '').toLowerCase();
+        if (rawMessage.includes('full_name')) {
+          setErrorMsg('Tu usuario vendedor no tiene nombre configurado en profiles.full_name. Contacta a IT.');
+        } else if (rawMessage.includes('sesion') || rawMessage.includes('jwt') || rawMessage.includes('auth')) {
+          setErrorMsg('Tu sesion no es valida. Vuelve a iniciar sesion.');
+        } else {
+          setErrorMsg('No se pudo cargar tu perfil. Contacta a IT.');
+        }
+        console.error('clientes bootstrap failed:', {
+          message: error?.message,
+          code: error?.code,
+          details: error?.details,
+          hint: error?.hint
+        });
       } finally {
         if (isMounted.current) {
           setLoading(false);
@@ -314,7 +347,7 @@ export default function Clientes() {
   }, [profile]);
 
   useEffect(() => {
-    if (!profile || realtimeStatus === 'SUBSCRIBED') return undefined;
+    if (!profile || realtimeStatus === 'SUBSCRIBED' || !isFocused) return undefined;
 
     const normalizedSeller = normalizeSellerName(profile.fullName);
     const pollForUnlockChanges = async () => {
@@ -361,10 +394,10 @@ export default function Clientes() {
     };
 
     pollForUnlockChanges();
-    const intervalId = setInterval(pollForUnlockChanges, 15000);
+    const intervalId = setInterval(pollForUnlockChanges, 30000);
 
     return () => clearInterval(intervalId);
-  }, [profile, realtimeStatus]);
+  }, [profile, realtimeStatus, isFocused]);
 
   const fetchClientes = async (reset = false, currentProfile = profile, searchTerm = debouncedSearch) => {
     const startedAt = Date.now();
@@ -388,7 +421,7 @@ export default function Clientes() {
 
       let query = supabase
         .from('customers')
-        .select('*')
+        .select(CUSTOMER_SELECT_FIELDS)
         .not('Nivel', 'ilike', 'EMPLEADOS')
         .order('CardName', { ascending: true })
         .order('CardCode', { ascending: true })
@@ -466,6 +499,16 @@ export default function Clientes() {
     if (loading || loadingMore || !hasMore || !profile || !Array.isArray(clientes)) return;
     fetchClientes(false, profile, debouncedSearch);
   };
+  const handleRefresh = async () => {
+    if (!profile) return;
+    try {
+      setRefreshing(true);
+      setHasMore(true);
+      await fetchClientes(true, profile, debouncedSearch);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const openNotifications = () => {
     setUnlockNotifications((prev) => prev.map((item) => ({ ...item, read: true })));
@@ -528,7 +571,7 @@ export default function Clientes() {
           placeholderTextColor="#999"
         />
         {!!profile && (
-          <Surface style={styles.profileSurface} elevation={2}>
+          <View style={styles.profileCard}>
             <Avatar.Icon
               size={34}
               icon={profile.role === 'admin' ? 'shield-account' : 'account-tie'}
@@ -578,7 +621,7 @@ export default function Clientes() {
             <Button mode="text" compact textColor="#EAF4FF" onPress={() => router.push('/perfil')}>
               Perfil
             </Button>
-          </Surface>
+          </View>
         )}
       </View>
 
@@ -590,6 +633,8 @@ export default function Clientes() {
         onEndReached={handleLoadMore}
         loadingMore={loadingMore}
         hasMore={hasMore}
+        refreshing={refreshing}
+        onRefresh={handleRefresh}
         emptyText={search ? `No se encontraron clientes para "${search}"` : 'No hay clientes disponibles'}
       />
 
@@ -724,14 +769,16 @@ const styles = StyleSheet.create({
     height: 45
   },
   searchInput: { fontSize: 16, color: COLORS.text, minHeight: 0 },
-  profileSurface: {
+  profileCard: {
     marginTop: 10,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.14)'
+    backgroundColor: '#0A4D90',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)'
   },
   avatarIcon: {
     backgroundColor: 'rgba(255,255,255,0.26)'

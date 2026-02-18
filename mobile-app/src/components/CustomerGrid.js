@@ -16,6 +16,8 @@ export default function CustomerGrid({
   onEndReached,
   loadingMore,
   hasMore,
+  refreshing = false,
+  onRefresh,
   emptyText
 }) {
   const { width } = useWindowDimensions();
@@ -39,7 +41,7 @@ export default function CustomerGrid({
       data={data}
       key={numColumns}
       numColumns={numColumns}
-      keyExtractor={(item, index) => String(item.CardCode || item.RUC || item.full_name || `cliente-${index}`)}
+      keyExtractor={(item) => String(item.CardCode || `${item.RUC || 'ruc'}-${item.CardName || item.full_name || 'cliente'}`)}
       columnWrapperStyle={numColumns > 1 ? { gap: 12, paddingHorizontal: 15 } : undefined}
       contentContainerStyle={[styles.listContent, numColumns === 1 ? { paddingHorizontal: 15 } : undefined]}
       renderItem={({ item }) => (
@@ -49,6 +51,8 @@ export default function CustomerGrid({
       )}
       onEndReached={onEndReached}
       onEndReachedThreshold={0.4}
+      refreshing={refreshing}
+      onRefresh={onRefresh}
       ListFooterComponent={
         loadingMore ? (
           <View style={[styles.gridWrap, styles.rowWrap, styles.footerSkeletonWrap]}>

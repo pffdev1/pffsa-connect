@@ -15,13 +15,15 @@ export default function ProductGrid({
   emptyText = 'No se encontraron productos.',
   onEndReached,
   loadingMore = false,
-  hasMore = false
+  hasMore = false,
+  refreshing = false,
+  onRefresh
 }) {
   const { width } = useWindowDimensions();
   const numColumns = getNumColumns(width);
   const skeletonCount = numColumns === 1 ? 2 : numColumns;
   const keyExtractor = useCallback(
-    (item, index) => `${item.ItemCode || 'producto'}-${item.CardCode || 'na'}-${index}`,
+    (item) => `${item.ItemCode || 'producto'}-${item.CardCode || 'na'}`,
     []
   );
   const renderItem = useCallback(
@@ -61,6 +63,8 @@ export default function ProductGrid({
       removeClippedSubviews
       onEndReachedThreshold={0.35}
       onEndReached={onEndReached}
+      refreshing={refreshing}
+      onRefresh={onRefresh}
       ListFooterComponent={
         loadingMore ? (
           <View style={[styles.gridWrap, styles.rowWrap, styles.footerSkeletonWrap]}>

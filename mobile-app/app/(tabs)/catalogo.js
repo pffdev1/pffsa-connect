@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { Alert, View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
@@ -71,7 +71,7 @@ export default function Catalogo() {
   const { cardCode, cardName, zona, idRuta } = useLocalSearchParams();
   const router = useRouter();
   const isFocused = useIsFocused();
-  const { addToCart, cart } = useCart();
+  const { addToCart, clearCart, cart } = useCart();
   const safeCardCode = String(Array.isArray(cardCode) ? cardCode[0] : cardCode || '').trim();
   const safeCardName = String(Array.isArray(cardName) ? cardName[0] : cardName || '').trim();
   const safeZona = String(Array.isArray(zona) ? zona[0] : zona || '').trim();
@@ -84,6 +84,7 @@ export default function Catalogo() {
   const [nextFrom, setNextFrom] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     setIsSearchLoading(true);
@@ -197,20 +198,62 @@ export default function Catalogo() {
   }, [safeCardCode, debouncedSearch]);
 
   const cartCount = cart.reduce((acc, item) => acc + item.quantity, 0);
+  const currentCartCardCode = String(cart?.[0]?.CardCode || '').trim();
   const handleAddToCart = useCallback(
     (item, quantityToAdd = 1) => {
+      const nextCardCode = String(safeCardCode || '').trim();
+      const addItem = () =>
+        addToCart({
+          ...item,
+          CardCode: nextCardCode,
+          CustomerName: safeCardName,
+          Zona: safeZona,
+          IdRuta: safeIdRuta,
+          quantity: quantityToAdd
+        });
+
+      if (currentCartCardCode && nextCardCode && currentCartCardCode !== nextCardCode) {
+        Alert.alert(
+          'Cambiar cliente',
+          'Tu carrito tiene productos de otro cliente. Si continuas, se vaciara el carrito actual.',
+          [
+            { text: 'Cancelar', style: 'cancel' },
+            {
+              text: 'Continuar',
+              style: 'destructive',
+              onPress: () => {
+                clearCart();
+                addItem();
+              }
+            }
+          ]
+        );
+        return;
+      }
+
       addToCart({
         ...item,
-        CardCode: safeCardCode,
+        CardCode: nextCardCode,
+        CustomerName: safeCardName,
         Zona: safeZona,
         IdRuta: safeIdRuta,
         quantity: quantityToAdd
       });
     },
-    [addToCart, safeCardCode, safeZona, safeIdRuta]
+    [addToCart, clearCart, currentCartCardCode, safeCardCode, safeCardName, safeZona, safeIdRuta]
   );
   const handleLoadMore = useCallback(() => {
     fetchProductos({ reset: false, searchTerm: debouncedSearch });
+  }, [fetchProductos, debouncedSearch]);
+  const handleRefresh = useCallback(async () => {
+    try {
+      setRefreshing(true);
+      setNextFrom(0);
+      setHasMore(true);
+      await fetchProductos({ reset: true, searchTerm: debouncedSearch });
+    } finally {
+      setRefreshing(false);
+    }
   }, [fetchProductos, debouncedSearch]);
   if (!safeCardCode) {
     return (
@@ -288,6 +331,8 @@ export default function Catalogo() {
         onEndReached={handleLoadMore}
         loadingMore={loadingMore}
         hasMore={hasMore}
+        refreshing={refreshing}
+        onRefresh={handleRefresh}
         emptyText="No se encontraron productos."
       />
     </SafeAreaView>
