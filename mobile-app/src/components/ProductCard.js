@@ -8,7 +8,7 @@ import { COLORS, GLOBAL_STYLES } from '../constants/theme';
 const FALLBACK_PRODUCT =
   'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=1200&q=80';
 
-function ProductCard({ item, onAdd, loading = false }) {
+function ProductCard({ item, onAdd, loading = false, isInCart = false }) {
   const rawImageUrl = item?.Url ?? item?.url ?? item?.image_url;
   const normalizedImageUrl =
     typeof rawImageUrl === 'string' && rawImageUrl.trim().length > 0
@@ -81,7 +81,7 @@ function ProductCard({ item, onAdd, loading = false }) {
 
   return (
     <Animated.View entering={FadeInDown.duration(260).springify().damping(18)}>
-      <View style={[styles.card, GLOBAL_STYLES.shadow]}>
+      <View style={[styles.card, GLOBAL_STYLES.shadow, isInCart && styles.cardInCart]}>
         <TouchableOpacity activeOpacity={0.92} onPress={() => setPreviewVisible(true)}>
           <Image
             source={{ uri: imageUrl }}
@@ -113,7 +113,9 @@ function ProductCard({ item, onAdd, loading = false }) {
                 style={styles.qtyInput}
               />
               <TouchableOpacity style={styles.btnAdd} onPress={handleAddPress}>
-                <Ionicons name="add" size={18} color="#FFF" />
+                <View style={[styles.btnAddInner, isInCart && styles.btnAddInnerSelected]}>
+                  <Ionicons name={isInCart ? 'checkmark' : 'add'} size={18} color="#FFF" />
+                </View>
               </TouchableOpacity>
             </View>
           </View>
@@ -136,6 +138,7 @@ function ProductCard({ item, onAdd, loading = false }) {
 
 const areEqual = (prevProps, nextProps) => {
   if (prevProps.loading !== nextProps.loading) return false;
+  if (prevProps.isInCart !== nextProps.isInCart) return false;
   if (prevProps.loading && nextProps.loading) return true;
 
   const prev = prevProps.item || {};
@@ -156,6 +159,11 @@ export default React.memo(ProductCard, areEqual);
 
 const styles = StyleSheet.create({
   card: { backgroundColor: '#FFF', borderRadius: 20, overflow: 'hidden', marginBottom: 12 },
+  cardInCart: {
+    backgroundColor: '#EEF9F2',
+    borderWidth: 1,
+    borderColor: '#BFE7CC'
+  },
   image: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#FFF' },
   zoomPill: {
     position: 'absolute',
@@ -189,12 +197,22 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF'
   },
   btnAdd: {
-    backgroundColor: COLORS.primary,
     width: 34,
     height: 34,
     borderRadius: 17,
     justifyContent: 'center',
     alignItems: 'center'
+  },
+  btnAddInner: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: COLORS.primary
+  },
+  btnAddInnerSelected: {
+    backgroundColor: '#2EAF61'
   },
   previewBackdrop: {
     flex: 1,

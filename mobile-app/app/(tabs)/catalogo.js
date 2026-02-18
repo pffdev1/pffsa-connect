@@ -1,13 +1,13 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
-import { Badge, Button, Card, IconButton, Searchbar } from 'react-native-paper';
+import { Badge, Button, IconButton, Searchbar } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import Animated, { FadeInDown } from 'react-native-reanimated';
 import { supabase } from '../../src/services/supabaseClient';
+import { getCachedJson, setCachedJson } from '../../src/services/offlineService';
 import { COLORS } from '../../src/constants/theme';
 import { useCart } from '../../src/context/CartContext';
 import ProductGrid from '../../src/components/ProductGrid';
@@ -178,9 +178,20 @@ export default function Catalogo() {
         setItems((prev) => normalizeCatalogRows(reset ? chunk : [...(prev || []), ...chunk]));
         setHasMore(rawChunk.length === PAGE_SIZE);
         setNextFrom(from + rawChunk.length);
+        if (reset && !normalizedSearch) {
+          await setCachedJson(`offline:catalogo:first_page:${safeCardCode}`, chunk);
+        }
       } catch (error) {
         console.error('Error cargando productos:', error.message);
-        if (reset) setItems([]);
+        if (reset) {
+          const cached = await getCachedJson(`offline:catalogo:first_page:${safeCardCode}`, []);
+          if (Array.isArray(cached) && cached.length > 0) {
+            setItems(cached);
+            setHasMore(false);
+          } else {
+            setItems([]);
+          }
+        }
       } finally {
         setLoadingMore(false);
       }
@@ -198,6 +209,15 @@ export default function Catalogo() {
   }, [safeCardCode, debouncedSearch]);
 
   const cartCount = cart.reduce((acc, item) => acc + item.quantity, 0);
+  const cartItemCodesForClient = useMemo(() => {
+    const set = new Set();
+    cart.forEach((item) => {
+      if (String(item?.CardCode || '').trim() !== safeCardCode) return;
+      const code = String(item?.ItemCode || '').trim();
+      if (code) set.add(code);
+    });
+    return set;
+  }, [cart, safeCardCode]);
   const currentCartCardCode = String(cart?.[0]?.CardCode || '').trim();
   const handleAddToCart = useCallback(
     (item, quantityToAdd = 1) => {
@@ -257,32 +277,26 @@ export default function Catalogo() {
   }, [fetchProductos, debouncedSearch]);
   if (!safeCardCode) {
     return (
-      <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
+      <SafeAreaView style={styles.container} edges={['left', 'right']}>
         <Stack.Screen options={{ title: 'Catalogo' }} />
         <LinearGradient colors={['#0A2952', '#0E3D75', '#1664A0']} style={styles.emptyWrap}>
-          <Animated.View entering={FadeInDown.duration(400).springify().damping(18)}>
-            <Card style={styles.emptyCard}>
-              <Card.Content style={styles.emptyCardContent}>
-                <View style={styles.emptyIcon}>
-                  <Ionicons name="storefront-outline" size={34} color={COLORS.primary} />
-                </View>
-                <Text style={styles.emptyTitle}>Selecciona un cliente para empezar</Text>
-                <Text style={styles.emptySub}>
-                  El catalogo se personaliza por cliente para mostrar precios y productos disponibles.
-                </Text>
-                <Button mode="contained" onPress={() => router.push('/clientes')} style={styles.emptyBtn} buttonColor={COLORS.primary}>
-                  VER CLIENTES
-                </Button>
-              </Card.Content>
-            </Card>
-          </Animated.View>
+          <View style={styles.emptyPanel}>
+            <View style={styles.emptyIcon}>
+              <Ionicons name="storefront-outline" size={34} color={COLORS.primary} />
+            </View>
+            <Text style={styles.emptyTitle}>Selecciona un cliente para empezar</Text>
+            <Text style={styles.emptySub}>El catalogo se personaliza por cliente para mostrar precios y productos disponibles.</Text>
+            <Button mode="contained" onPress={() => router.push('/clientes')} style={styles.emptyBtn} buttonColor={COLORS.primary}>
+              VER CLIENTES
+            </Button>
+          </View>
         </LinearGradient>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['left', 'right']}>
       <Stack.Screen
         options={{
           title: 'Catalogo',
@@ -328,6 +342,7 @@ export default function Catalogo() {
       <ProductGrid
         data={isSearchLoading ? null : items}
         onAdd={handleAddToCart}
+        selectedItemCodes={cartItemCodesForClient}
         onEndReached={handleLoadMore}
         loadingMore={loadingMore}
         hasMore={hasMore}
@@ -382,13 +397,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 24
   },
-  emptyCard: {
+  emptyPanel: {
     width: '100%',
     maxWidth: 520,
     borderRadius: 24,
-    backgroundColor: 'rgba(255,255,255,0.98)'
+    backgroundColor: 'rgba(255,255,255,0.98)',
+    paddingVertical: 24,
+    paddingHorizontal: 18,
+    alignItems: 'center'
   },
-  emptyCardContent: { alignItems: 'center', paddingVertical: 22 },
   emptyIcon: {
     width: 66,
     height: 66,

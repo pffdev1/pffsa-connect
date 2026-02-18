@@ -17,3 +17,16 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: false
   }
 });
+
+export const isInvalidRefreshTokenError = (error) => {
+  const raw = `${error?.message || ''} ${error?.name || ''} ${error?.code || ''}`.toLowerCase();
+  return raw.includes('invalid refresh token') || raw.includes('refresh token not found');
+};
+
+export const clearLocalSupabaseSession = async () => {
+  try {
+    await supabase.auth.signOut({ scope: 'local' });
+  } catch (_error) {
+    // Ignore local sign out cleanup errors.
+  }
+};

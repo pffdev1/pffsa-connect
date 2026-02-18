@@ -1,5 +1,6 @@
 import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
-import { supabase } from '../services/supabaseClient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { clearLocalSupabaseSession, isInvalidRefreshTokenError, supabase } from '../services/supabaseClient';
 
 const CartContext = createContext();
 const roundQty = (value) => Math.round(value * 1000) / 1000;
@@ -7,30 +8,70 @@ const toSafeString = (value) => String(value || '').trim();
 const buildCartKey = (item = {}) => `${toSafeString(item.CardCode)}::${toSafeString(item.ItemCode)}`;
 const matchesCartIdentifier = (item, identifier) =>
   item?.cartKey === identifier || toSafeString(item?.ItemCode) === identifier;
+const CART_STORAGE_KEY_PREFIX = 'cart:v1:user:';
+const getCartStorageKey = (userId) => `${CART_STORAGE_KEY_PREFIX}${toSafeString(userId)}`;
 
 export const CartProvider = ({ children }) => {
   const [cart, setCart] = useState([]);
+  const [cartOwnerId, setCartOwnerId] = useState(null);
+  const [cartHydrated, setCartHydrated] = useState(false);
   const currentUserIdRef = useRef(null);
 
   useEffect(() => {
     let mounted = true;
+    const hydrateCartForUser = async (userId) => {
+      const safeUserId = toSafeString(userId);
+      if (!safeUserId) {
+        if (!mounted) return;
+        setCart([]);
+        setCartOwnerId(null);
+        setCartHydrated(true);
+        return;
+      }
+
+      try {
+        const raw = await AsyncStorage.getItem(getCartStorageKey(safeUserId));
+        if (!mounted) return;
+        const parsed = raw ? JSON.parse(raw) : [];
+        setCart(Array.isArray(parsed) ? parsed : []);
+      } catch (_error) {
+        if (!mounted) return;
+        setCart([]);
+      } finally {
+        if (!mounted) return;
+        setCartOwnerId(safeUserId);
+        setCartHydrated(true);
+      }
+    };
 
     const initUser = async () => {
-      const {
-        data: { user }
-      } = await supabase.auth.getUser();
+      try {
+        const {
+          data: { user }
+        } = await supabase.auth.getUser();
 
-      if (!mounted) return;
-      currentUserIdRef.current = user?.id || null;
+        if (!mounted) return;
+        const safeUserId = user?.id || null;
+        currentUserIdRef.current = safeUserId;
+        await hydrateCartForUser(safeUserId);
+      } catch (error) {
+        if (!mounted) return;
+        if (isInvalidRefreshTokenError(error)) {
+          await clearLocalSupabaseSession();
+        }
+        currentUserIdRef.current = null;
+        await hydrateCartForUser(null);
+      }
     };
 
     initUser();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const nextUserId = session?.user?.id || null;
       if (currentUserIdRef.current !== nextUserId) {
-        setCart([]);
         currentUserIdRef.current = nextUserId;
+        setCartHydrated(false);
+        await hydrateCartForUser(nextUserId);
       }
     });
 
@@ -39,6 +80,11 @@ export const CartProvider = ({ children }) => {
       authListener?.subscription?.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!cartHydrated || !cartOwnerId) return;
+    AsyncStorage.setItem(getCartStorageKey(cartOwnerId), JSON.stringify(cart)).catch(() => {});
+  }, [cart, cartHydrated, cartOwnerId]);
 
   // Add or increment quantity (supports decimals, e.g. 1.5 KG)
   const addToCart = (product) => {

@@ -6,9 +6,9 @@ import { Button, Card, IconButton } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import Animated, { FadeInDown } from 'react-native-reanimated';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
-import { supabase } from '../../src/services/supabaseClient';
+import { clearLocalSupabaseSession, supabase } from '../../src/services/supabaseClient';
+import { enqueuePendingOrder, flushPendingOrders } from '../../src/services/offlineService';
 import { useCart } from '../../src/context/CartContext';
 import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
 
@@ -74,7 +74,7 @@ export default function Pedido() {
       {
         text: 'OK',
         onPress: async () => {
-          await supabase.auth.signOut();
+          await clearLocalSupabaseSession();
           clearCart();
           router.replace({ pathname: '/login', params: { refresh: String(Date.now()) } });
         }
@@ -127,6 +127,10 @@ export default function Pedido() {
     updateCartItemQuantity(identifier, normalized);
     setQuantityDrafts((prev) => ({ ...prev, [identifier]: formatQuantity(normalized) }));
   };
+
+  useEffect(() => {
+    flushPendingOrders().catch(() => {});
+  }, []);
 
   const handleConfirmarPedido = async () => {
     if (cart.length === 0) {
@@ -216,6 +220,7 @@ export default function Pedido() {
     }
 
     const sendOrder = async () => {
+      let queuedPayload = null;
       try {
         setSubmittingOrder(true);
         const {
@@ -263,6 +268,7 @@ export default function Pedido() {
           p_id_ruta: resolvedIdRuta,
           p_lines: linesPayload
         };
+        queuedPayload = rpcPayload;
 
         console.log('create_sales_order payload', rpcPayload);
         console.log('create_sales_order user', user.id);
@@ -311,6 +317,12 @@ export default function Pedido() {
       } catch (error) {
         console.error('create_sales_order rpc failed', error);
         const rawErrorText = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+        const isNetworkError =
+          rawErrorText.includes('network request failed') ||
+          rawErrorText.includes('failed to fetch') ||
+          rawErrorText.includes('timeout') ||
+          rawErrorText.includes('offline') ||
+          rawErrorText.includes('network');
         const isSessionExpired =
           rawErrorText.includes('auth session missing') ||
           rawErrorText.includes('usuario no autenticado') ||
@@ -321,6 +333,22 @@ export default function Pedido() {
 
         if (isSessionExpired) {
           openSessionExpiredAlert();
+          return;
+        }
+
+        if (isNetworkError && queuedPayload) {
+          await enqueuePendingOrder({
+            rpcPayload: queuedPayload,
+            cardCode: safeCardCode,
+            customerName: firstItem.CustomerName || firstItem.CardName || ''
+          });
+          setCheckoutModalVisible(false);
+          setShowDatePicker(false);
+          setDeliveryDate('');
+          setSelectedWarehouse('100');
+          clearCart();
+          Alert.alert('Sin conexion', 'Tu pedido se guardo en cola y se enviara automaticamente cuando vuelva la conexion.');
+          router.replace('/clientes');
           return;
         }
 
@@ -437,25 +465,21 @@ export default function Pedido() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['left', 'right']}>
       <Stack.Screen options={{ title: 'Resumen de Pedido' }} />
 
       {cart.length === 0 ? (
         <LinearGradient colors={['#0A2952', '#0E3D75', '#1664A0']} style={styles.emptyWrap}>
-          <Animated.View entering={FadeInDown.duration(360).springify().damping(18)}>
-            <Card style={styles.emptyCard}>
-              <Card.Content style={styles.emptyContainer}>
-                <View style={styles.emptyIcon}>
-                  <Ionicons name="cart-outline" size={30} color={COLORS.primary} />
-                </View>
-                <Text style={styles.emptyTitle}>Tu carrito esta vacio</Text>
-                <Text style={styles.emptyText}>Agrega productos del catalogo para crear un pedido y calcular el total automaticamente.</Text>
-                <Button mode="contained" buttonColor={COLORS.primary} style={styles.emptyButton} onPress={() => router.push('/catalogo')}>
-                  IR AL CATALOGO
-                </Button>
-              </Card.Content>
-            </Card>
-          </Animated.View>
+          <View style={styles.emptyPanel}>
+            <View style={styles.emptyIcon}>
+              <Ionicons name="cart-outline" size={30} color={COLORS.primary} />
+            </View>
+            <Text style={styles.emptyTitle}>Tu carrito esta vacio</Text>
+            <Text style={styles.emptyText}>Agrega productos del catalogo para crear un pedido y calcular el total automaticamente.</Text>
+            <Button mode="contained" buttonColor={COLORS.primary} style={styles.emptyButton} onPress={() => router.push('/catalogo')}>
+              IR AL CATALOGO
+            </Button>
+          </View>
         </LinearGradient>
       ) : (
         <>
@@ -743,8 +767,15 @@ const styles = StyleSheet.create({
   warehouseOptionNameActive: { color: COLORS.primary },
   checkoutActions: { marginTop: 14, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 8 },
   emptyWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
-  emptyCard: { width: '100%', maxWidth: 520, borderRadius: 24, backgroundColor: '#FFF' },
-  emptyContainer: { alignItems: 'center', paddingVertical: 20 },
+  emptyPanel: {
+    width: '100%',
+    maxWidth: 520,
+    borderRadius: 24,
+    backgroundColor: '#FFF',
+    alignItems: 'center',
+    paddingVertical: 22,
+    paddingHorizontal: 16
+  },
   emptyIcon: {
     width: 60,
     height: 60,

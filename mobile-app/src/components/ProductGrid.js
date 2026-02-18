@@ -12,6 +12,7 @@ const getNumColumns = (width) => {
 export default function ProductGrid({
   data,
   onAdd,
+  selectedItemCodes,
   emptyText = 'No se encontraron productos.',
   onEndReached,
   loadingMore = false,
@@ -29,10 +30,10 @@ export default function ProductGrid({
   const renderItem = useCallback(
     ({ item }) => (
       <View style={[styles.colWrap, numColumns > 1 ? { flex: 1 } : undefined]}>
-        <ProductCard item={item} onAdd={onAdd} />
+        <ProductCard item={item} onAdd={onAdd} isInCart={selectedItemCodes?.has?.(String(item?.ItemCode || '').trim())} />
       </View>
     ),
-    [numColumns, onAdd]
+    [numColumns, onAdd, selectedItemCodes]
   );
 
   if (data === null) {

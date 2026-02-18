@@ -11,7 +11,7 @@ const resolveTipoCadena = (item) => item?.TipoCadena || 'No definida';
 const resolveRuta = (item) => item?.Ruta || 'Sin ruta';
 const isBlocked = (item) => String(item?.Bloqueado || '').trim().toUpperCase() === 'Y';
 
-export default function CustomerCard({ item, onPress, onInfoPress, loading = false }) {
+function CustomerCard({ item, onPress, onInfoPress, loading = false }) {
   if (loading) {
     return (
       <View style={[styles.cardWrap, styles.skeletonCard]}>
@@ -81,6 +81,25 @@ export default function CustomerCard({ item, onPress, onInfoPress, loading = fal
   );
 }
 
+const areEqual = (prevProps, nextProps) => {
+  if (prevProps.loading !== nextProps.loading) return false;
+  if (prevProps.loading && nextProps.loading) return true;
+
+  const prev = prevProps.item || {};
+  const next = nextProps.item || {};
+
+  return (
+    prev.CardCode === next.CardCode &&
+    prev.CardName === next.CardName &&
+    prev.CardFName === next.CardFName &&
+    prev.Ruta === next.Ruta &&
+    prev.SubCategoria === next.SubCategoria &&
+    prev.Nivel === next.Nivel &&
+    prev.TipoCadena === next.TipoCadena &&
+    prev.Bloqueado === next.Bloqueado
+  );
+};
+
 const styles = StyleSheet.create({
   cardWrap: {
     backgroundColor: '#FFF',
@@ -114,3 +133,5 @@ const styles = StyleSheet.create({
   skeletonSpacerSm: { height: 8 },
   skeletonFooterRow: { marginTop: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }
 });
+
+export default React.memo(CustomerCard, areEqual);

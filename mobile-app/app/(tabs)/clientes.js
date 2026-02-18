@@ -8,7 +8,8 @@ import { Avatar, Badge, Button, Chip, Divider, IconButton, Modal, Portal, Search
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { supabase } from '../../src/services/supabaseClient';
+import { clearLocalSupabaseSession, isInvalidRefreshTokenError, supabase } from '../../src/services/supabaseClient';
+import { getCachedJson, setCachedJson } from '../../src/services/offlineService';
 import { useCart } from '../../src/context/CartContext';
 import { COLORS } from '../../src/constants/theme';
 import CustomerGrid from '../../src/components/CustomerGrid';
@@ -133,6 +134,8 @@ export default function Clientes() {
   useEffect(() => {
     isMounted.current = true;
     (async () => {
+      let bootstrapUserId = '';
+      let bootstrapRole = 'vendedor';
       const startedAt = Date.now();
       try {
         setLoading(true);
@@ -144,6 +147,7 @@ export default function Clientes() {
 
         if (userError) throw userError;
         if (!user?.id) throw new Error('No hay sesion activa');
+        bootstrapUserId = user.id;
 
         const { data: p, error: profileError } = await supabase
           .from('profiles')
@@ -157,6 +161,7 @@ export default function Clientes() {
           fullName: deriveProfileName(p, user),
           role: (p?.role || 'vendedor').trim().toLowerCase()
         };
+        bootstrapRole = nextProfile.role;
 
         if (nextProfile.role !== 'admin' && !nextProfile.fullName) {
           throw new Error('Perfil vendedor sin full_name en profiles');
@@ -193,15 +198,32 @@ export default function Clientes() {
         const nuevos = data || [];
         setClientes(nuevos);
         setHasMore(nuevos.length === PAGE_SIZE);
+        const cacheKey = `offline:clientes:first_page:${user.id}:${nextProfile.role}`;
+        await setCachedJson(cacheKey, nuevos);
       } catch (error) {
         if (!isMounted.current) return;
         const rawMessage = String(error?.message || '').toLowerCase();
+        if (isInvalidRefreshTokenError(error)) {
+          await clearLocalSupabaseSession();
+          router.replace({ pathname: '/login', params: { refresh: String(Date.now()) } });
+          return;
+        }
         if (rawMessage.includes('full_name')) {
           setErrorMsg('Tu usuario vendedor no tiene nombre configurado en profiles.full_name. Contacta a IT.');
         } else if (rawMessage.includes('sesion') || rawMessage.includes('jwt') || rawMessage.includes('auth')) {
           setErrorMsg('Tu sesion no es valida. Vuelve a iniciar sesion.');
         } else {
-          setErrorMsg('No se pudo cargar tu perfil. Contacta a IT.');
+          const userId = String(bootstrapUserId || '').trim();
+          const roleKey = String(bootstrapRole || 'vendedor').trim();
+          const cacheKey = userId ? `offline:clientes:first_page:${userId}:${roleKey}` : null;
+          const cached = cacheKey ? await getCachedJson(cacheKey, null) : null;
+          if (Array.isArray(cached) && cached.length > 0) {
+            setClientes(cached);
+            setHasMore(false);
+            setErrorMsg('Sin conexion: mostrando clientes en cache.');
+          } else {
+            setErrorMsg('No se pudo cargar tu perfil. Contacta a IT.');
+          }
         }
         console.error('clientes bootstrap failed:', {
           message: error?.message,
@@ -218,7 +240,7 @@ export default function Clientes() {
     return () => {
       isMounted.current = false;
     };
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     if (!notificationsStorageKey) return undefined;

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, FlatList } from 'react-native';
-import { Stack, useFocusEffect } from 'expo-router';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, FlatList, Modal, Pressable } from 'react-native';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import * as Linking from 'expo-linking';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -15,7 +15,7 @@ import {
   TextInput
 } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../../src/services/supabaseClient';
+import { clearLocalSupabaseSession, isInvalidRefreshTokenError, supabase } from '../../src/services/supabaseClient';
 import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
 
 const passwordSchema = z
@@ -42,6 +42,7 @@ const normalizeSellerName = (value = '') =>
 
 const ORDERS_PAGE_SIZE = 12;
 const ADMIN_VISIBLE_SELLERS = 5;
+const ORDER_LINES_PREVIEW_LIMIT = 20;
 
 const resolveOrderStatus = (status = '') => {
   const normalized = String(status).trim().toLowerCase();
@@ -63,8 +64,28 @@ const formatDateTime = (value) => {
     minute: '2-digit'
   });
 };
+const normalizeLineNumber = (row, index) => String(row?.line_num || row?.LineNum || row?.line_id || row?.id || index + 1);
+const normalizeItemCode = (value) => String(value || '').trim().toUpperCase();
+const normalizeOrderLine = (row, index) => {
+  const quantity = Number(row?.quantity ?? row?.Quantity ?? row?.qty ?? 0);
+
+  return {
+    id: normalizeLineNumber(row, index),
+    itemCode: String(row?.item_code || row?.ItemCode || '').trim(),
+    itemName: String(row?.item_name || row?.ItemName || '').trim(),
+    uom: String(row?.uom || row?.UOM || '').trim(),
+    warehouseCode: String(row?.warehouse_code || row?.WarehouseCode || row?.whs_code || '').trim(),
+    quantity: Number.isFinite(quantity) ? quantity : 0
+  };
+};
+const mapProductNameFromRow = (row) => {
+  const code = String(row?.ItemCode || row?.item_code || row?.itemcode || '').trim();
+  const name = String(row?.ItemName || row?.item_name || row?.itemname || '').trim();
+  return { code, name };
+};
 
 export default function Perfil() {
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [fullName, setFullName] = useState('');
@@ -77,17 +98,40 @@ export default function Perfil() {
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [loadingMoreOrders, setLoadingMoreOrders] = useState(false);
   const [activeTab, setActiveTab] = useState('pedidos');
+  const [orderDetailVisible, setOrderDetailVisible] = useState(false);
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [selectedOrderCustomerName, setSelectedOrderCustomerName] = useState('');
+  const [orderLines, setOrderLines] = useState([]);
+  const [loadingOrderLines, setLoadingOrderLines] = useState(false);
+  const [orderLinesError, setOrderLinesError] = useState('');
   const [savingPassword, setSavingPassword] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  const [adminTab, setAdminTab] = useState('equipo');
+  const [adminTab, setAdminTab] = useState('pedidos');
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminError, setAdminError] = useState('');
   const [adminResettingSellerId, setAdminResettingSellerId] = useState('');
   const [sellerRows, setSellerRows] = useState([]);
   const [sellerSearch, setSellerSearch] = useState('');
   const [showAllSellers, setShowAllSellers] = useState(false);
+  const [adminKpis, setAdminKpis] = useState({
+    orders: 0,
+    sent: 0,
+    pending: 0,
+    error: 0,
+    activeSellers: 0
+  });
+  const [sellerOrdersVisible, setSellerOrdersVisible] = useState(false);
+  const [selectedSeller, setSelectedSeller] = useState(null);
+  const [selectedSellerOrders, setSelectedSellerOrders] = useState([]);
+  const [loadingSellerOrders, setLoadingSellerOrders] = useState(false);
+  const [sellerOrdersError, setSellerOrdersError] = useState('');
+  const visibleOrderLines = useMemo(() => {
+    if (!Array.isArray(orderLines)) return [];
+    if (orderLines.length <= ORDER_LINES_PREVIEW_LIMIT) return orderLines;
+    return orderLines.slice(-ORDER_LINES_PREVIEW_LIMIT);
+  }, [orderLines]);
 
   const {
     control,
@@ -128,12 +172,25 @@ export default function Perfil() {
         .filter((row) => row.id)
         .sort((a, b) => a.fullName.localeCompare(b.fullName));
 
+      const aggregate = normalizedRows.reduce(
+        (acc, row) => ({
+          orders: acc.orders + row.ordersCount,
+          sent: acc.sent + row.sentCount,
+          pending: acc.pending + row.pendingCount,
+          error: acc.error + row.errorCount,
+          activeSellers: acc.activeSellers + (row.ordersCount > 0 ? 1 : 0)
+        }),
+        { orders: 0, sent: 0, pending: 0, error: 0, activeSellers: 0 }
+      );
+
       setSellerRows(normalizedRows);
+      setAdminKpis(aggregate);
       setAdminError('');
       setShowAllSellers(false);
     } catch (error) {
       console.error('admin dashboard load failed:', error);
       setSellerRows([]);
+      setAdminKpis({ orders: 0, sent: 0, pending: 0, error: 0, activeSellers: 0 });
       setAdminError('No se pudo cargar el panel de vendedores.');
     } finally {
       setAdminLoading(false);
@@ -238,12 +295,16 @@ export default function Perfil() {
         if (countError) throw countError;
         setClientesCount(count || 0);
 
+        await loadOrders(user.id, { reset: true });
         if (profileRole === 'admin') {
           await loadAdminDashboard();
-        } else {
-          await loadOrders(user.id, { reset: true });
         }
       } catch (_error) {
+        if (isInvalidRefreshTokenError(_error)) {
+          await clearLocalSupabaseSession();
+          router.replace({ pathname: '/login', params: { refresh: String(Date.now()) } });
+          return;
+        }
         setFullName('No disponible');
         setRole('vendedor');
         setClientesCount(0);
@@ -256,7 +317,7 @@ export default function Perfil() {
         if (showLoader) setLoading(false);
       }
     },
-    [loadAdminDashboard, loadOrders]
+    [loadAdminDashboard, loadOrders, router]
   );
 
   useEffect(() => {
@@ -266,11 +327,10 @@ export default function Perfil() {
   useFocusEffect(
     useCallback(() => {
       if (!authUserId) return undefined;
+      refreshOrdersFirstPage(authUserId);
       if (role === 'admin') {
         loadAdminDashboard();
-        return undefined;
       }
-      refreshOrdersFirstPage(authUserId);
       return undefined;
     }, [authUserId, role, loadAdminDashboard, refreshOrdersFirstPage])
   );
@@ -284,6 +344,127 @@ export default function Perfil() {
   const handleLoadMoreOrders = async () => {
     if (!authUserId) return;
     await loadOrders(authUserId, { reset: false });
+  };
+
+  const loadOrderLines = useCallback(
+    async (orderId) => {
+      if (!orderId) return;
+      try {
+        setLoadingOrderLines(true);
+        setOrderLinesError('');
+        setOrderLines([]);
+
+        let { data, error } = await supabase
+          .from('sales_order_lines')
+          .select('*')
+          .eq('sales_order_id', orderId)
+          .order('id', { ascending: true });
+
+        if (error) {
+          const fallback = await supabase
+            .from('sales_order_lines')
+            .select('*')
+            .eq('order_id', orderId)
+            .order('id', { ascending: true });
+          data = fallback.data;
+          error = fallback.error;
+        }
+
+        if (error) throw error;
+
+        let normalized = (data || []).map((row, idx) => normalizeOrderLine(row, idx));
+        const rawItemCodes = Array.from(
+          new Set((data || []).map((row) => String(row?.item_code || row?.ItemCode || '')).filter(Boolean))
+        );
+        const itemCodes = Array.from(new Set([...rawItemCodes, ...normalized.map((line) => line.itemCode).filter(Boolean)]));
+
+        if (itemCodes.length > 0) {
+          let productsData = null;
+          let productsError = null;
+          const queryAttempts = [
+            { select: 'ItemCode, ItemName', inCol: 'ItemCode' },
+            { select: 'item_code, item_name', inCol: 'item_code' },
+            { select: 'itemcode, itemname', inCol: 'itemcode' }
+          ];
+
+          for (const attempt of queryAttempts) {
+            // Try common schema variants until one works.
+            const result = await supabase.from('products').select(attempt.select).in(attempt.inCol, itemCodes);
+            if (!result.error) {
+              productsData = result.data;
+              productsError = null;
+              break;
+            }
+            productsError = result.error;
+          }
+
+          if (!productsError && Array.isArray(productsData)) {
+            const namesByCode = new Map();
+            productsData.forEach((row) => {
+              const { code, name } = mapProductNameFromRow(row);
+              if (!code || !name) return;
+              namesByCode.set(code, name);
+              namesByCode.set(normalizeItemCode(code), name);
+            });
+            normalized = normalized.map((line) => ({
+              ...line,
+              itemName: namesByCode.get(line.itemCode) || namesByCode.get(normalizeItemCode(line.itemCode)) || line.itemName
+            }));
+          } else if (productsError) {
+            console.error('products lookup failed for order lines:', {
+              message: productsError.message,
+              code: productsError.code,
+              details: productsError.details
+            });
+          }
+        }
+
+        setOrderLines(normalized);
+      } catch (error) {
+        console.error('load order lines failed:', error);
+        setOrderLines([]);
+        setOrderLinesError('No se pudieron cargar las lineas de este pedido.');
+      } finally {
+        setLoadingOrderLines(false);
+      }
+    },
+    []
+  );
+
+  const loadOrderCustomerName = useCallback(async (cardCode) => {
+    const safeCardCode = String(cardCode || '').trim();
+    if (!safeCardCode) {
+      setSelectedOrderCustomerName('');
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('customers')
+        .select('CardName, CardFName')
+        .eq('CardCode', safeCardCode)
+        .maybeSingle();
+      if (error) throw error;
+
+      const resolved = String(data?.CardFName || data?.CardName || '').trim();
+      setSelectedOrderCustomerName(resolved);
+    } catch (_error) {
+      setSelectedOrderCustomerName('');
+    }
+  }, []);
+
+  const handleOpenOrderDetail = async (order) => {
+    setSelectedOrder(order);
+    setOrderDetailVisible(true);
+    await Promise.all([loadOrderLines(order?.id), loadOrderCustomerName(order?.card_code)]);
+  };
+
+  const handleCloseOrderDetail = () => {
+    setOrderDetailVisible(false);
+    setSelectedOrder(null);
+    setSelectedOrderCustomerName('');
+    setOrderLines([]);
+    setOrderLinesError('');
   };
 
   const handleChangePassword = handleSubmit(async ({ newPassword }) => {
@@ -319,6 +500,44 @@ export default function Perfil() {
     } finally {
       setAdminResettingSellerId('');
     }
+  };
+
+  const loadSellerOrders = useCallback(async (sellerId) => {
+    if (!sellerId) return;
+
+    try {
+      setLoadingSellerOrders(true);
+      setSellerOrdersError('');
+      setSelectedSellerOrders([]);
+
+      const { data, error } = await supabase
+        .from('sales_orders')
+        .select('id, card_code, status, sap_docnum, created_at')
+        .eq('created_by', sellerId)
+        .order('created_at', { ascending: false })
+        .limit(40);
+
+      if (error) throw error;
+      setSelectedSellerOrders(data || []);
+    } catch (_error) {
+      setSelectedSellerOrders([]);
+      setSellerOrdersError('No se pudieron cargar los pedidos del vendedor.');
+    } finally {
+      setLoadingSellerOrders(false);
+    }
+  }, []);
+
+  const handleOpenSellerOrders = async (seller) => {
+    setSelectedSeller(seller);
+    setSellerOrdersVisible(true);
+    await loadSellerOrders(seller?.id);
+  };
+
+  const handleCloseSellerOrders = () => {
+    setSellerOrdersVisible(false);
+    setSelectedSeller(null);
+    setSelectedSellerOrders([]);
+    setSellerOrdersError('');
   };
 
   const renderSecurityForm = () => (
@@ -392,6 +611,61 @@ export default function Perfil() {
     </>
   );
 
+  const renderOrdersSection = (title = 'Mis ultimos pedidos') => (
+    <>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {ordersLoading ? (
+        <View style={styles.ordersList}>
+          {Array.from({ length: 4 }).map((_, idx) => (
+            <View key={`order-skeleton-${idx}`} style={styles.orderSkeletonRow}>
+              <View style={styles.orderSkeletonLineLg} />
+              <View style={styles.orderSkeletonLineMd} />
+              <View style={styles.orderSkeletonLineSm} />
+            </View>
+          ))}
+        </View>
+      ) : recentOrders.length === 0 ? (
+        <Text style={styles.ordersEmpty}>Aun no hay pedidos recientes.</Text>
+      ) : (
+        <View style={styles.ordersList}>
+          {recentOrders.map((order) => {
+            const statusInfo = resolveOrderStatus(order?.status);
+            return (
+              <Pressable key={order.id} style={styles.orderRow} onPress={() => handleOpenOrderDetail(order)}>
+                <View style={styles.orderMain}>
+                  <Text style={styles.orderTitle}>
+                    {order?.sap_docnum ? `Pedido SAP #${order.sap_docnum}` : `Pedido ${order?.id?.slice(0, 8) || ''}`}
+                  </Text>
+                  <Text style={styles.orderMeta}>
+                    Cliente: {order?.card_code || 'N/A'} | Entrega: {order?.doc_due_date || 'N/A'}
+                  </Text>
+                  <Text style={styles.orderDate}>{formatDateTime(order?.created_at)}</Text>
+                </View>
+                <View style={styles.orderRightWrap}>
+                  <View style={[styles.statusPill, { backgroundColor: `${statusInfo.color}22` }]}>
+                    <Text style={[styles.statusPillText, { color: statusInfo.color }]}>{statusInfo.label}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={COLORS.textLight} />
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
+      {hasMoreOrders && (
+        <Button
+          mode="outlined"
+          style={styles.loadMoreButton}
+          loading={loadingMoreOrders}
+          disabled={loadingMoreOrders}
+          onPress={handleLoadMoreOrders}
+        >
+          CARGAR MAS
+        </Button>
+      )}
+    </>
+  );
+
   const renderVendedorView = () => (
     <>
       <View style={styles.row}>
@@ -414,55 +688,7 @@ export default function Perfil() {
       />
 
       {activeTab === 'pedidos' ? (
-        <>
-          <Text style={styles.sectionTitle}>Mis ultimos pedidos</Text>
-          {ordersLoading ? (
-            <View style={styles.ordersList}>
-              {Array.from({ length: 4 }).map((_, idx) => (
-                <View key={`order-skeleton-${idx}`} style={styles.orderSkeletonRow}>
-                  <View style={styles.orderSkeletonLineLg} />
-                  <View style={styles.orderSkeletonLineMd} />
-                  <View style={styles.orderSkeletonLineSm} />
-                </View>
-              ))}
-            </View>
-          ) : recentOrders.length === 0 ? (
-            <Text style={styles.ordersEmpty}>Aun no hay pedidos recientes.</Text>
-          ) : (
-            <View style={styles.ordersList}>
-              {recentOrders.map((order) => {
-                const statusInfo = resolveOrderStatus(order?.status);
-                return (
-                  <View key={order.id} style={styles.orderRow}>
-                    <View style={styles.orderMain}>
-                      <Text style={styles.orderTitle}>
-                        {order?.sap_docnum ? `Pedido SAP #${order.sap_docnum}` : `Pedido ${order?.id?.slice(0, 8) || ''}`}
-                      </Text>
-                      <Text style={styles.orderMeta}>
-                        Cliente: {order?.card_code || 'N/A'} | Entrega: {order?.doc_due_date || 'N/A'}
-                      </Text>
-                      <Text style={styles.orderDate}>{formatDateTime(order?.created_at)}</Text>
-                    </View>
-                    <View style={[styles.statusPill, { backgroundColor: `${statusInfo.color}22` }]}>
-                      <Text style={[styles.statusPillText, { color: statusInfo.color }]}>{statusInfo.label}</Text>
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-          )}
-          {hasMoreOrders && (
-            <Button
-              mode="outlined"
-              style={styles.loadMoreButton}
-              loading={loadingMoreOrders}
-              disabled={loadingMoreOrders}
-              onPress={handleLoadMoreOrders}
-            >
-              CARGAR MAS
-            </Button>
-          )}
-        </>
+        renderOrdersSection('Mis ultimos pedidos')
       ) : (
         renderSecurityForm()
       )}
@@ -511,17 +737,40 @@ export default function Perfil() {
         <Text style={styles.value}>{clientesCount}</Text>
       </View>
 
+      <View style={styles.adminKpiGrid}>
+        <Surface style={styles.adminKpiCard} elevation={0}>
+          <Text style={styles.adminKpiLabel}>Pedidos</Text>
+          <Text style={styles.adminKpiValue}>{adminKpis.orders}</Text>
+        </Surface>
+        <Surface style={styles.adminKpiCard} elevation={0}>
+          <Text style={styles.adminKpiLabel}>Enviados</Text>
+          <Text style={styles.adminKpiValue}>{adminKpis.sent}</Text>
+        </Surface>
+        <Surface style={styles.adminKpiCard} elevation={0}>
+          <Text style={styles.adminKpiLabel}>Pendientes</Text>
+          <Text style={styles.adminKpiValue}>{adminKpis.pending}</Text>
+        </Surface>
+        <Surface style={styles.adminKpiCard} elevation={0}>
+          <Text style={styles.adminKpiLabel}>Errores</Text>
+          <Text style={styles.adminKpiValue}>{adminKpis.error}</Text>
+        </Surface>
+      </View>
+      <Text style={styles.adminKpiFooter}>Vendedores activos con pedidos: {adminKpis.activeSellers}</Text>
+
       <SegmentedButtons
         value={adminTab}
         onValueChange={setAdminTab}
         style={styles.tabs}
         buttons={[
+          { value: 'pedidos', label: 'Pedidos', icon: 'receipt-text-outline' },
           { value: 'equipo', label: 'Vendedores', icon: 'account-group-outline' },
           { value: 'seguridad', label: 'Mi Seguridad', icon: 'shield-lock-outline' }
         ]}
       />
 
-      {adminTab === 'equipo' ? (
+      {adminTab === 'pedidos' ? (
+        renderOrdersSection('Mis pedidos')
+      ) : adminTab === 'equipo' ? (
         <>
           <Text style={styles.sectionTitle}>Gestion de vendedores</Text>
           <TextInput
@@ -543,19 +792,16 @@ export default function Perfil() {
             <Text style={styles.ordersEmpty}>No hay vendedores para mostrar.</Text>
           ) : (
             <View style={styles.adminListWrap}>
-              <FlatList
-                data={visibleSellerRows}
-                keyExtractor={(item) => item.id}
-                scrollEnabled={false}
-                renderItem={({ item: seller }) => {
-                  const isResetting = adminResettingSellerId === seller.id;
-
-                  return (
+              {visibleSellerRows.map((seller) => {
+                const isResetting = adminResettingSellerId === seller.id;
+                return (
+                  <Pressable key={seller.id} onPress={() => handleOpenSellerOrders(seller)}>
                     <Surface style={styles.sellerCard} elevation={1}>
                       <View style={styles.sellerHeader}>
                         <View style={styles.sellerTitleWrap}>
                           <Text style={styles.sellerName}>{seller.fullName}</Text>
                           <Text style={styles.sellerEmail}>{seller.email || seller.id}</Text>
+                          <Text style={styles.sellerHint}>Toca para ver pedidos</Text>
                         </View>
                       </View>
 
@@ -585,9 +831,9 @@ export default function Perfil() {
                         </Button>
                       </View>
                     </Surface>
-                  );
-                }}
-              />
+                  </Pressable>
+                );
+              })}
               {hasHiddenSellers && (
                 <Button mode="text" compact onPress={() => setShowAllSellers((prev) => !prev)}>
                   {showAllSellers ? 'Ver menos' : `Ver mas (${filteredSellerRows.length - ADMIN_VISIBLE_SELLERS})`}
@@ -627,6 +873,119 @@ export default function Perfil() {
           </Card>
         </ScrollView>
       )}
+
+      <Modal visible={orderDetailVisible} transparent animationType="fade" onRequestClose={handleCloseOrderDetail}>
+        <View style={styles.detailBackdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={handleCloseOrderDetail} />
+          <View style={styles.detailPanel}>
+            <View style={styles.detailHeader}>
+              <Text style={styles.detailTitle}>
+                {selectedOrder?.sap_docnum ? `Pedido SAP #${selectedOrder.sap_docnum}` : `Pedido ${selectedOrder?.id?.slice(0, 8) || ''}`}
+              </Text>
+              <Button compact onPress={handleCloseOrderDetail}>
+                Cerrar
+              </Button>
+            </View>
+
+            <Text style={styles.detailMeta}>
+              Cliente: {selectedOrderCustomerName || 'Sin nombre'} ({selectedOrder?.card_code || 'N/A'})
+            </Text>
+            <Text style={styles.detailMeta}>Entrega: {selectedOrder?.doc_due_date || 'N/A'}</Text>
+            <Text style={styles.detailMeta}>Creado: {formatDateTime(selectedOrder?.created_at)}</Text>
+            {orderLines.length > ORDER_LINES_PREVIEW_LIMIT && (
+              <Text style={styles.detailMetaHighlight}>
+                Mostrando las ultimas {ORDER_LINES_PREVIEW_LIMIT} lineas de {orderLines.length}.
+              </Text>
+            )}
+
+            <View style={styles.detailLinesWrap}>
+              {loadingOrderLines ? (
+                <ActivityIndicator color={COLORS.primary} />
+              ) : orderLinesError ? (
+                <Text style={styles.ordersEmpty}>{orderLinesError}</Text>
+              ) : orderLines.length === 0 ? (
+                <Text style={styles.ordersEmpty}>Este pedido no tiene lineas registradas.</Text>
+              ) : (
+                <FlatList
+                  data={visibleOrderLines}
+                  keyExtractor={(item, idx) => `${item.id}-${item.itemCode || idx}`}
+                  style={styles.linesList}
+                  contentContainerStyle={styles.linesListContent}
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator
+                  renderItem={({ item }) => (
+                    <View style={styles.lineRow}>
+                      <View style={styles.lineMain}>
+                        <Text style={styles.lineTitle}>{item.itemName || item.itemCode || 'Articulo sin nombre'}</Text>
+                        <Text style={styles.lineMeta}>
+                          Codigo: {item.itemCode || 'N/A'}
+                          {item.uom ? ` | UOM: ${item.uom}` : ''}
+                          {item.warehouseCode ? ` | Almacen: ${item.warehouseCode}` : ''}
+                        </Text>
+                      </View>
+                      <View style={styles.lineTotals}>
+                        <Text style={styles.lineQty}>x{item.quantity}</Text>
+                      </View>
+                    </View>
+                  )}
+                />
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={sellerOrdersVisible} transparent animationType="fade" onRequestClose={handleCloseSellerOrders}>
+        <View style={styles.detailBackdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={handleCloseSellerOrders} />
+          <View style={styles.detailPanel}>
+            <View style={styles.detailHeader}>
+              <Text style={styles.detailTitle}>Pedidos de {selectedSeller?.fullName || 'vendedor'}</Text>
+              <Button compact onPress={handleCloseSellerOrders}>
+                Cerrar
+              </Button>
+            </View>
+
+            <Text style={styles.detailMeta}>{selectedSeller?.email || selectedSeller?.id || ''}</Text>
+
+            <View style={styles.detailLinesWrap}>
+              {loadingSellerOrders ? (
+                <ActivityIndicator color={COLORS.primary} />
+              ) : sellerOrdersError ? (
+                <Text style={styles.ordersEmpty}>{sellerOrdersError}</Text>
+              ) : selectedSellerOrders.length === 0 ? (
+                <Text style={styles.ordersEmpty}>Este vendedor no tiene pedidos recientes.</Text>
+              ) : (
+                <FlatList
+                  data={selectedSellerOrders}
+                  keyExtractor={(item) => item.id}
+                  style={styles.linesList}
+                  contentContainerStyle={styles.linesListContent}
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator
+                  renderItem={({ item }) => {
+                    const statusInfo = resolveOrderStatus(item?.status);
+                    return (
+                      <View style={styles.sellerOrderRow}>
+                        <View style={styles.sellerOrderMain}>
+                          <Text style={styles.sellerOrderTitle}>
+                            {item?.sap_docnum ? `SAP #${item.sap_docnum}` : `Pedido ${item?.id?.slice(0, 8) || ''}`}
+                          </Text>
+                          <Text style={styles.sellerOrderMeta}>Cliente: {item?.card_code || 'N/A'}</Text>
+                          <Text style={styles.sellerOrderMeta}>{formatDateTime(item?.created_at)}</Text>
+                        </View>
+                        <View style={[styles.statusPill, { backgroundColor: `${statusInfo.color}22` }]}>
+                          <Text style={[styles.statusPillText, { color: statusInfo.color }]}>{statusInfo.label}</Text>
+                        </View>
+                      </View>
+                    );
+                  }}
+                />
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -693,6 +1052,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start'
   },
   orderMain: { flex: 1, marginRight: 8 },
+  orderRightWrap: { alignItems: 'flex-end', gap: 4 },
   orderTitle: { color: COLORS.text, fontSize: 13, fontWeight: '700' },
   orderMeta: { color: COLORS.textLight, fontSize: 12, marginTop: 2 },
   orderDate: { color: COLORS.textLight, fontSize: 11, marginTop: 3 },
@@ -704,6 +1064,19 @@ const styles = StyleSheet.create({
   submitButton: { marginTop: 12, borderRadius: 10 },
 
   adminSearchInput: { marginTop: 8, backgroundColor: '#FFF' },
+  adminKpiGrid: { marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  adminKpiCard: {
+    width: '48%',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: '#F7FAFF',
+    borderWidth: 1,
+    borderColor: '#E7EEF8'
+  },
+  adminKpiLabel: { color: COLORS.textLight, fontSize: 11, fontWeight: '600' },
+  adminKpiValue: { marginTop: 2, color: COLORS.primary, fontSize: 15, fontWeight: '800' },
+  adminKpiFooter: { marginTop: 8, color: COLORS.textLight, fontSize: 12, fontWeight: '600' },
 
   adminListWrap: { gap: 10, marginTop: 8 },
   sellerCard: {
@@ -717,6 +1090,7 @@ const styles = StyleSheet.create({
   sellerTitleWrap: { flex: 1, marginRight: 10 },
   sellerName: { color: COLORS.text, fontSize: 15, fontWeight: '700' },
   sellerEmail: { marginTop: 2, color: COLORS.textLight, fontSize: 12 },
+  sellerHint: { marginTop: 4, color: COLORS.primary, fontSize: 11, fontWeight: '600' },
 
   sellerMetricsRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, marginTop: 10 },
   metricBox: {
@@ -743,5 +1117,55 @@ const styles = StyleSheet.create({
   adminSkeletonLg: { width: '52%', height: 12, borderRadius: 8, backgroundColor: '#EEF1F4' },
   adminSkeletonSm: { marginTop: 8, width: '38%', height: 10, borderRadius: 8, backgroundColor: '#EEF1F4' },
   adminSkeletonStatsRow: { marginTop: 10, flexDirection: 'row', gap: 8 },
-  adminSkeletonStat: { flex: 1, height: 34, borderRadius: 10, backgroundColor: '#EEF1F4' }
+  adminSkeletonStat: { flex: 1, height: 34, borderRadius: 10, backgroundColor: '#EEF1F4' },
+
+  detailBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16
+  },
+  detailPanel: {
+    width: '100%',
+    maxWidth: 580,
+    height: '80%',
+    backgroundColor: '#FFF',
+    borderRadius: 14,
+    padding: 14,
+    overflow: 'hidden'
+  },
+  detailHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  detailTitle: { color: COLORS.primary, fontWeight: '800', fontSize: 16, marginRight: 8, flex: 1 },
+  detailMeta: { color: COLORS.textLight, fontSize: 12, marginTop: 4 },
+  detailMetaHighlight: { color: COLORS.primary, fontSize: 12, marginTop: 6, fontWeight: '700' },
+  detailLinesWrap: { marginTop: 10, borderTopWidth: 1, borderTopColor: '#EEF1F4', paddingTop: 8, minHeight: 120, flex: 1 },
+  linesList: { flex: 1 },
+  linesListContent: { paddingBottom: 8 },
+  lineRow: {
+    borderWidth: 1,
+    borderColor: '#EEF1F4',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  lineMain: { flex: 1, marginRight: 8 },
+  lineTitle: { color: COLORS.text, fontWeight: '700', fontSize: 13 },
+  lineMeta: { color: COLORS.textLight, fontSize: 11, marginTop: 2 },
+  lineTotals: { alignItems: 'flex-end' },
+  lineQty: { color: COLORS.text, fontSize: 12, fontWeight: '700' },
+  sellerOrderRow: {
+    borderWidth: 1,
+    borderColor: '#EEF1F4',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'flex-start'
+  },
+  sellerOrderMain: { flex: 1, marginRight: 8 },
+  sellerOrderTitle: { color: COLORS.text, fontSize: 13, fontWeight: '700' },
+  sellerOrderMeta: { color: COLORS.textLight, fontSize: 12, marginTop: 2 }
 });

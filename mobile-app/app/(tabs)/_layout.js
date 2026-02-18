@@ -34,7 +34,11 @@ export default function TabLayout() {
       headerStyle: { backgroundColor: COLORS.primary },
       headerTintColor: '#FFF',
       tabBarHideOnKeyboard: true,
+      sceneStyle: { backgroundColor: COLORS.background },
       tabBarStyle: {
+        backgroundColor: COLORS.background,
+        borderTopColor: '#DDE5F0',
+        borderTopWidth: 1,
         height: 56 + bottomInset,
         paddingBottom: bottomInset,
         paddingTop: 6

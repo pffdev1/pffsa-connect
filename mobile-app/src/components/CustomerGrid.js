@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { FlatList, Text, useWindowDimensions, View, StyleSheet } from 'react-native';
 import CustomerCard from './CustomerCard';
 import { COLORS } from '../constants/theme';
@@ -23,6 +23,18 @@ export default function CustomerGrid({
   const { width } = useWindowDimensions();
   const numColumns = getNumColumns(width);
   const skeletonCount = numColumns === 1 ? 2 : numColumns;
+  const keyExtractor = useCallback(
+    (item) => String(item.CardCode || `${item.RUC || 'ruc'}-${item.CardName || item.full_name || 'cliente'}`),
+    []
+  );
+  const renderItem = useCallback(
+    ({ item }) => (
+      <View style={[styles.colWrap, numColumns > 1 ? { flex: 1 } : undefined]}>
+        <CustomerCard item={item} onPress={onPressCustomer} onInfoPress={onPressInfo} />
+      </View>
+    ),
+    [numColumns, onPressCustomer, onPressInfo]
+  );
 
   if (data === null) {
     return (
@@ -41,14 +53,15 @@ export default function CustomerGrid({
       data={data}
       key={numColumns}
       numColumns={numColumns}
-      keyExtractor={(item) => String(item.CardCode || `${item.RUC || 'ruc'}-${item.CardName || item.full_name || 'cliente'}`)}
+      keyExtractor={keyExtractor}
       columnWrapperStyle={numColumns > 1 ? { gap: 12, paddingHorizontal: 15 } : undefined}
       contentContainerStyle={[styles.listContent, numColumns === 1 ? { paddingHorizontal: 15 } : undefined]}
-      renderItem={({ item }) => (
-        <View style={[styles.colWrap, numColumns > 1 ? { flex: 1 } : undefined]}>
-          <CustomerCard item={item} onPress={onPressCustomer} onInfoPress={onPressInfo} />
-        </View>
-      )}
+      renderItem={renderItem}
+      initialNumToRender={10}
+      maxToRenderPerBatch={10}
+      updateCellsBatchingPeriod={60}
+      windowSize={7}
+      removeClippedSubviews
       onEndReached={onEndReached}
       onEndReachedThreshold={0.4}
       refreshing={refreshing}
