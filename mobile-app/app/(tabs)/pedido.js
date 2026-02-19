@@ -7,6 +7,8 @@ import { Button, Card, IconButton } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { Swipeable } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -54,6 +56,13 @@ const resolveCartImageUrl = (item) => {
   const safeUrl = String(rawUrl || '').trim();
   return safeUrl || PRODUCT_FALLBACK_IMAGE;
 };
+const escapeHtml = (value = '') =>
+  String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 
 export default function Pedido() {
   const router = useRouter();
@@ -65,6 +74,7 @@ export default function Pedido() {
   const [selectedWarehouse, setSelectedWarehouse] = useState('100');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [submittingOrder, setSubmittingOrder] = useState(false);
+  const [sharingPdf, setSharingPdf] = useState(false);
   const [swipeHintReady, setSwipeHintReady] = useState(false);
   const swipeableRefs = useRef(new Map());
   const swipeHintPlayedRef = useRef(false);
@@ -76,7 +86,6 @@ export default function Pedido() {
   const hasMixedClients = cartCardCodes.length > 1;
   const orderCustomerCode = cartCardCodes[0] || '';
   const orderCustomerName = String(cart?.[0]?.CustomerName || cart?.[0]?.CardName || '').trim();
-  const screenOptions = useMemo(() => ({ title: 'Resumen de Pedido' }), []);
   const openSessionExpiredAlert = () => {
     setCheckoutModalVisible(false);
     setShowDatePicker(false);
@@ -304,7 +313,9 @@ export default function Pedido() {
       .map((item) => ({
         ItemCode: String(item?.ItemCode || '').trim(),
         Quantity: Number(item?.quantity),
-        WarehouseCode: warehouse.code
+        WarehouseCode: warehouse.code,
+        UnitPrice: Number(item?.Price),
+        Price: Number(item?.Price)
       }))
       .filter((line) => line.ItemCode && Number.isFinite(line.Quantity) && line.Quantity > 0);
 
@@ -575,6 +586,117 @@ export default function Pedido() {
       </Swipeable>
     );
   };
+
+  const handleShareCartPdf = async () => {
+    if (cart.length === 0) {
+      Alert.alert('Carrito vacio', 'No hay productos para compartir.');
+      return;
+    }
+
+    try {
+      setSharingPdf(true);
+      const available = await Sharing.isAvailableAsync();
+      if (!available) {
+        Alert.alert('No disponible', 'Compartir no esta disponible en este dispositivo.');
+        return;
+      }
+
+      const createdAt = new Date().toLocaleString('es-PA', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+
+      const rowsHtml = cart
+        .map((item, index) => {
+          const code = escapeHtml(item?.ItemCode || '');
+          const name = escapeHtml(item?.ItemName || '');
+          const qty = Number(item?.quantity || 0);
+          const price = Number(item?.Price || 0);
+          const subtotal = qty * price;
+          return `
+            <tr>
+              <td>${index + 1}</td>
+              <td>${code}</td>
+              <td>${name}</td>
+              <td style="text-align:right;">${qty}</td>
+              <td style="text-align:right;">$${price.toFixed(2)}</td>
+              <td style="text-align:right;">$${subtotal.toFixed(2)}</td>
+            </tr>
+          `;
+        })
+        .join('');
+
+      const html = `
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <style>
+              body { font-family: Arial, sans-serif; padding: 18px; color: #1f2937; }
+              .brand { margin: 0 0 2px; font-size: 20px; font-weight: 700; color: #0b4b88; }
+              h1 { margin: 0 0 6px; font-size: 16px; color: #0b4b88; }
+              .meta { margin-bottom: 12px; font-size: 12px; color: #4b5563; }
+              table { width: 100%; border-collapse: collapse; font-size: 12px; }
+              th, td { border: 1px solid #d1d5db; padding: 6px; vertical-align: top; }
+              th { background: #eef2f7; text-align: left; }
+              .totals { margin-top: 10px; font-size: 14px; text-align: right; font-weight: bold; color: #0b4b88; }
+              .footer-note { margin-top: 22px; font-size: 11px; color: #4b5563; text-align: center; }
+            </style>
+          </head>
+          <body>
+            <div class="brand">Pedersen Fine Foods</div>
+            <h1>Resumen de Carrito</h1>
+            <div class="meta">
+              Cliente: ${escapeHtml(orderCustomerName || 'Sin nombre')} ${escapeHtml(orderCustomerCode ? `(${orderCustomerCode})` : '')}<br/>
+              Fecha: ${escapeHtml(createdAt)}<br/>
+              Lineas: ${cart.length}
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>SKU</th>
+                  <th>Descripcion</th>
+                  <th>Cant.</th>
+                  <th>Precio</th>
+                  <th>Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rowsHtml}
+              </tbody>
+            </table>
+            <div class="totals">Total: $${getTotal().toFixed(2)}</div>
+            <div class="footer-note">Cotizacion valida por 7 dias.</div>
+          </body>
+        </html>
+      `;
+
+      const { uri } = await Print.printToFileAsync({ html });
+      await Sharing.shareAsync(uri, {
+        mimeType: 'application/pdf',
+        dialogTitle: 'Compartir carrito en PDF',
+        UTI: 'com.adobe.pdf'
+      });
+    } catch (error) {
+      Alert.alert('Error', error?.message || 'No se pudo compartir el carrito en PDF.');
+    } finally {
+      setSharingPdf(false);
+    }
+  };
+  const screenOptions = useMemo(
+    () => ({
+      title: 'Resumen de Pedido',
+      headerRight: () => (
+        <Pressable onPress={handleShareCartPdf} disabled={sharingPdf} style={styles.headerShareBtn}>
+          <Ionicons name="share-outline" size={22} color="#FFF" />
+        </Pressable>
+      )
+    }),
+    [handleShareCartPdf, sharingPdf]
+  );
 
   return (
     <SafeAreaView style={styles.container} edges={['left', 'right']}>
@@ -847,6 +969,14 @@ const styles = StyleSheet.create({
   actionButtons: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
   btnCancel: { flex: 1 },
   btnConfirm: { flex: 2, borderRadius: 8 },
+  headerShareBtn: {
+    marginRight: 8,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
   checkoutBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',

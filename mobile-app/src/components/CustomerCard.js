@@ -10,8 +10,14 @@ const resolveNivel = (item) => item?.Nivel || 'No definido';
 const resolveTipoCadena = (item) => item?.TipoCadena || 'No definida';
 const resolveRuta = (item) => item?.Ruta || 'Sin ruta';
 const isBlocked = (item) => String(item?.Bloqueado || '').trim().toUpperCase() === 'Y';
+const normalizeSellerName = (value = '') =>
+  String(value || '')
+    .trim()
+    .replace(/[._-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
 
-function CustomerCard({ item, onPress, onInfoPress, loading = false }) {
+function CustomerCard({ item, onPress, onInfoPress, loading = false, viewerRole = 'vendedor', viewerSellerName = '' }) {
   if (loading) {
     return (
       <View style={[styles.cardWrap, styles.skeletonCard]}>
@@ -38,6 +44,10 @@ function CustomerCard({ item, onPress, onInfoPress, loading = false }) {
   const nivel = resolveNivel(item);
   const tipoCadena = resolveTipoCadena(item);
   const blocked = isBlocked(item);
+  const isAdminViewer = String(viewerRole || '').trim().toLowerCase() === 'admin';
+  const assignedSeller = normalizeSellerName(item?.Vendedor || '');
+  const viewerSeller = normalizeSellerName(viewerSellerName);
+  const isAssignedToViewer = !isAdminViewer && viewerSeller && assignedSeller && assignedSeller === viewerSeller;
 
   return (
     <View style={[styles.cardWrap, GLOBAL_STYLES.shadow]}>
@@ -47,6 +57,11 @@ function CustomerCard({ item, onPress, onInfoPress, loading = false }) {
             {name}
           </Text>
           <Text style={styles.code}>{item?.CardCode || ''}</Text>
+          {!isAdminViewer && (
+            <View style={[styles.assignmentBadge, isAssignedToViewer ? styles.assignmentMine : styles.assignmentOther]}>
+              <Text style={styles.assignmentText}>{isAssignedToViewer ? 'Asignado a mi' : 'De otro vendedor'}</Text>
+            </View>
+          )}
 
           <View style={styles.row}>
             <Ionicons name="navigate-outline" size={14} color={COLORS.textLight} />
@@ -96,7 +111,10 @@ const areEqual = (prevProps, nextProps) => {
     prev.SubCategoria === next.SubCategoria &&
     prev.Nivel === next.Nivel &&
     prev.TipoCadena === next.TipoCadena &&
-    prev.Bloqueado === next.Bloqueado
+    prev.Bloqueado === next.Bloqueado &&
+    prev.Vendedor === next.Vendedor &&
+    prevProps.viewerRole === nextProps.viewerRole &&
+    prevProps.viewerSellerName === nextProps.viewerSellerName
   );
 };
 
@@ -111,6 +129,16 @@ const styles = StyleSheet.create({
   content: { padding: 12, paddingRight: 44 },
   name: { color: COLORS.primary, fontSize: 15, fontWeight: '700' },
   code: { marginTop: 4, color: COLORS.textLight, fontSize: 11, fontWeight: '600' },
+  assignmentBadge: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4
+  },
+  assignmentMine: { backgroundColor: '#E7F7ED' },
+  assignmentOther: { backgroundColor: '#EEF1F4' },
+  assignmentText: { color: '#3F4A5A', fontSize: 10, fontWeight: '700' },
   row: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
   meta: { color: COLORS.textLight, marginLeft: 6, fontSize: 12, flex: 1 },
   metaSmall: { color: COLORS.textLight, marginLeft: 6, fontSize: 11 },

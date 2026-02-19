@@ -64,10 +64,20 @@ const formatDateTime = (value) => {
     minute: '2-digit'
   });
 };
+const formatMoney = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '$0.00';
+  return `$${n.toFixed(2)}`;
+};
 const normalizeLineNumber = (row, index) => String(row?.line_num || row?.LineNum || row?.line_id || row?.id || index + 1);
 const normalizeItemCode = (value) => String(value || '').trim().toUpperCase();
 const normalizeOrderLine = (row, index) => {
   const quantity = Number(row?.quantity ?? row?.Quantity ?? row?.qty ?? 0);
+  const unitPrice = Number(row?.unit_price ?? row?.UnitPrice ?? row?.price ?? row?.Price ?? 0);
+  const sourceLineTotal = Number(row?.line_total ?? row?.LineTotal ?? row?.total ?? row?.Total ?? NaN);
+  const lineTotal = Number.isFinite(sourceLineTotal)
+    ? sourceLineTotal
+    : (Number.isFinite(quantity) ? quantity : 0) * (Number.isFinite(unitPrice) ? unitPrice : 0);
 
   return {
     id: normalizeLineNumber(row, index),
@@ -75,7 +85,9 @@ const normalizeOrderLine = (row, index) => {
     itemName: String(row?.item_name || row?.ItemName || '').trim(),
     uom: String(row?.uom || row?.UOM || '').trim(),
     warehouseCode: String(row?.warehouse_code || row?.WarehouseCode || row?.whs_code || '').trim(),
-    quantity: Number.isFinite(quantity) ? quantity : 0
+    quantity: Number.isFinite(quantity) ? quantity : 0,
+    unitPrice: Number.isFinite(unitPrice) ? unitPrice : 0,
+    lineTotal: Number.isFinite(lineTotal) ? lineTotal : 0
   };
 };
 const mapProductNameFromRow = (row) => {
@@ -128,6 +140,10 @@ export default function Perfil() {
   const [selectedSellerOrders, setSelectedSellerOrders] = useState([]);
   const [loadingSellerOrders, setLoadingSellerOrders] = useState(false);
   const [sellerOrdersError, setSellerOrdersError] = useState('');
+  const orderLinesTotal = useMemo(
+    () => (Array.isArray(orderLines) ? orderLines.reduce((acc, line) => acc + Number(line?.lineTotal || 0), 0) : 0),
+    [orderLines]
+  );
   const visibleOrderLines = useMemo(() => {
     if (!Array.isArray(orderLines)) return [];
     if (orderLines.length <= ORDER_LINES_PREVIEW_LIMIT) return orderLines;
@@ -144,7 +160,12 @@ export default function Perfil() {
     defaultValues: { newPassword: '', confirmPassword: '' }
   });
 
-  const resetRedirectTo = useMemo(() => Linking.createURL('reset-password'), []);
+  const resetRedirectTo = useMemo(() => {
+    if (typeof window !== 'undefined' && window.location?.origin) {
+      return `${window.location.origin}/reset-password`;
+    }
+    return Linking.createURL('reset-password');
+  }, []);
   const perfilScreenOptions = useMemo(
     () => ({ title: role === 'admin' ? 'Panel Admin' : 'Mi Perfil' }),
     [role]
@@ -902,6 +923,7 @@ export default function Perfil() {
             </Text>
             <Text style={styles.detailMeta}>Entrega: {selectedOrder?.doc_due_date || 'N/A'}</Text>
             <Text style={styles.detailMeta}>Creado: {formatDateTime(selectedOrder?.created_at)}</Text>
+            <Text style={styles.detailMetaTotal}>Total pedido: {formatMoney(orderLinesTotal)}</Text>
             {orderLines.length > ORDER_LINES_PREVIEW_LIMIT && (
               <Text style={styles.detailMetaHighlight}>
                 Mostrando las ultimas {ORDER_LINES_PREVIEW_LIMIT} lineas de {orderLines.length}.
@@ -935,6 +957,8 @@ export default function Perfil() {
                       </View>
                       <View style={styles.lineTotals}>
                         <Text style={styles.lineQty}>x{item.quantity}</Text>
+                        <Text style={styles.linePrice}>{formatMoney(item.unitPrice)}</Text>
+                        <Text style={styles.lineSubtotal}>{formatMoney(item.lineTotal)}</Text>
                       </View>
                     </View>
                   )}
@@ -996,6 +1020,7 @@ export default function Perfil() {
           </View>
         </View>
       </Modal>
+
     </View>
   );
 }
@@ -1148,6 +1173,7 @@ const styles = StyleSheet.create({
   detailHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   detailTitle: { color: COLORS.primary, fontWeight: '800', fontSize: 16, marginRight: 8, flex: 1 },
   detailMeta: { color: COLORS.textLight, fontSize: 12, marginTop: 4 },
+  detailMetaTotal: { color: COLORS.primary, fontSize: 13, marginTop: 6, fontWeight: '800' },
   detailMetaHighlight: { color: COLORS.primary, fontSize: 12, marginTop: 6, fontWeight: '700' },
   detailLinesWrap: { marginTop: 10, borderTopWidth: 1, borderTopColor: '#EEF1F4', paddingTop: 8, minHeight: 120, flex: 1 },
   linesList: { flex: 1 },
@@ -1166,6 +1192,8 @@ const styles = StyleSheet.create({
   lineMeta: { color: COLORS.textLight, fontSize: 11, marginTop: 2 },
   lineTotals: { alignItems: 'flex-end' },
   lineQty: { color: COLORS.text, fontSize: 12, fontWeight: '700' },
+  linePrice: { color: COLORS.textLight, fontSize: 11, marginTop: 2 },
+  lineSubtotal: { color: COLORS.primary, fontSize: 12, marginTop: 2, fontWeight: '700' },
   sellerOrderRow: {
     borderWidth: 1,
     borderColor: '#EEF1F4',

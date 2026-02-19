@@ -22,10 +22,7 @@ export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const { cart } = useCart();
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 8 : 0);
-  const cartItemCount = cart.reduce((acc, item) => {
-    const qty = Number(item?.quantity);
-    return acc + (Number.isFinite(qty) ? qty : 0);
-  }, 0);
+  const cartItemCount = cart.length;
 
   return (
     <Tabs screenOptions={{

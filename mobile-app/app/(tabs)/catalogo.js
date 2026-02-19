@@ -215,7 +215,7 @@ export default function Catalogo() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [safeCardCode, debouncedSearch]);
 
-  const cartCount = cart.reduce((acc, item) => acc + item.quantity, 0);
+  const cartCount = cart.length;
   const cartItemCodesForClient = useMemo(() => {
     const set = new Set();
     cart.forEach((item) => {

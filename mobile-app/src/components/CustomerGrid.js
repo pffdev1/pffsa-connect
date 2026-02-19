@@ -13,6 +13,8 @@ export default function CustomerGrid({
   data,
   onPressCustomer,
   onPressInfo,
+  viewerRole = 'vendedor',
+  viewerSellerName = '',
   onEndReached,
   loadingMore,
   hasMore,
@@ -30,10 +32,16 @@ export default function CustomerGrid({
   const renderItem = useCallback(
     ({ item }) => (
       <View style={[styles.colWrap, numColumns > 1 ? { flex: 1 } : undefined]}>
-        <CustomerCard item={item} onPress={onPressCustomer} onInfoPress={onPressInfo} />
+        <CustomerCard
+          item={item}
+          onPress={onPressCustomer}
+          onInfoPress={onPressInfo}
+          viewerRole={viewerRole}
+          viewerSellerName={viewerSellerName}
+        />
       </View>
     ),
-    [numColumns, onPressCustomer, onPressInfo]
+    [numColumns, onPressCustomer, onPressInfo, viewerRole, viewerSellerName]
   );
 
   if (data === null) {

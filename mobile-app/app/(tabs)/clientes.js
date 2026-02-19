@@ -18,6 +18,7 @@ const PAGE_SIZE = 50;
 const MAX_UNLOCK_NOTIFICATIONS = 30;
 const MIN_SKELETON_MS = 700;
 const SEARCH_DEBOUNCE_MS = 280;
+const NOTIFICATION_DEDUPE_WINDOW_MS = 2 * 60 * 1000;
 const CUSTOMER_SELECT_FIELDS =
   'CardCode, CardName, CardFName, RUC, DV, Vendedor, Nivel, SubCategoria, TipoCadena, Ruta, Zona, IDRuta, Direccion, DiasEntrega, Horario, Balance, Bloqueado';
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -41,13 +42,6 @@ const deriveProfileName = (profileRow, authUser) => {
 
   return '';
 };
-const buildRealtimeEqFilter = (column, value = '') => {
-  const safeValue = String(value || '').trim();
-  if (!safeValue) return undefined;
-  // Supabase Realtime expects PostgREST-style filters without quoted string literals.
-  // Encode spaces/special chars to avoid CHANNEL_ERROR parsing failures.
-  return `${column}=eq.${encodeURIComponent(safeValue)}`;
-};
 const buildChannelSellerToken = (value = '') => {
   const token = String(value || '')
     .toLowerCase()
@@ -62,6 +56,17 @@ const matchesSearchTerm = (item, normalizedTerm) => {
   );
 };
 const isClientBlocked = (item) => normalizeSellerName(String(item?.Bloqueado || '')) === 'Y';
+const formatNotificationTime = (value) => {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleString('es-PA', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
 
 export default function Clientes() {
   const isFocused = useIsFocused();
@@ -85,6 +90,7 @@ export default function Clientes() {
   const clientesRef = useRef([]);
   const blockedStateRef = useRef(new Map());
   const realtimeErrorRef = useRef('');
+  const unlockNotificationIndexRef = useRef(new Map());
   const hasHydratedNotificationsRef = useRef(false);
   const isLoadingMoreRef = useRef(false);
   const hasInitializedSearchRef = useRef(false);
@@ -188,10 +194,6 @@ export default function Clientes() {
         };
         bootstrapRole = nextProfile.role;
 
-        if (nextProfile.role !== 'admin' && !nextProfile.fullName) {
-          throw new Error('Perfil vendedor sin full_name en profiles');
-        }
-
         if (!isMounted.current) return;
         setAuthUserId(user.id);
         setProfile(nextProfile);
@@ -206,10 +208,6 @@ export default function Clientes() {
           .order('CardCode', { ascending: true })
           .order('Nivel', { ascending: true })
           .range(0, PAGE_SIZE - 1);
-
-        if (nextProfile.role !== 'admin') {
-          query = query.eq('Vendedor', normalizeSellerName(nextProfile.fullName));
-        }
 
         const { data, error } = await query;
         if (error) throw error;
@@ -233,9 +231,7 @@ export default function Clientes() {
           router.replace({ pathname: '/login', params: { refresh: String(Date.now()) } });
           return;
         }
-        if (rawMessage.includes('full_name')) {
-          setErrorMsg('Tu usuario vendedor no tiene nombre configurado en profiles.full_name. Contacta a IT.');
-        } else if (rawMessage.includes('sesion') || rawMessage.includes('jwt') || rawMessage.includes('auth')) {
+        if (rawMessage.includes('sesion') || rawMessage.includes('jwt') || rawMessage.includes('auth')) {
           setErrorMsg('Tu sesion no es valida. Vuelve a iniciar sesion.');
         } else {
           const userId = String(bootstrapUserId || '').trim();
@@ -281,19 +277,29 @@ export default function Clientes() {
         if (cancelled) return;
 
         if (!rawValue) {
+          unlockNotificationIndexRef.current = new Map();
           setUnlockNotifications([]);
           return;
         }
 
         const parsed = JSON.parse(rawValue);
         if (!Array.isArray(parsed)) {
+          unlockNotificationIndexRef.current = new Map();
           setUnlockNotifications([]);
           return;
         }
+        const normalized = parsed
+          .filter((item) => item && item.cardCode)
+          .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+          .slice(0, MAX_UNLOCK_NOTIFICATIONS);
 
-        setUnlockNotifications(parsed.slice(0, MAX_UNLOCK_NOTIFICATIONS));
+        unlockNotificationIndexRef.current = new Map(
+          normalized.map((item) => [String(item.cardCode || '').trim(), new Date(item.createdAt || 0).getTime() || 0])
+        );
+        setUnlockNotifications(normalized);
       } catch (_error) {
         if (!cancelled) {
+          unlockNotificationIndexRef.current = new Map();
           setUnlockNotifications([]);
         }
       } finally {
@@ -319,13 +325,30 @@ export default function Clientes() {
     );
   }, [unlockNotifications, notificationsStorageKey]);
 
+  const pushUnlockNotification = useCallback((input = {}) => {
+    const cardCode = String(input.cardCode || '').trim();
+    if (!cardCode) return;
+
+    const now = Date.now();
+    const prevAt = Number(unlockNotificationIndexRef.current.get(cardCode) || 0);
+    if (now - prevAt < NOTIFICATION_DEDUPE_WINDOW_MS) return;
+
+    unlockNotificationIndexRef.current.set(cardCode, now);
+    const notificationItem = {
+      id: `${cardCode}-${now}`,
+      customerName: String(input.customerName || 'Cliente sin nombre'),
+      cardCode,
+      createdAt: new Date(now).toISOString(),
+      read: false
+    };
+
+    setUnlockNotifications((prev) => [notificationItem, ...prev].slice(0, MAX_UNLOCK_NOTIFICATIONS));
+  }, []);
+
   useEffect(() => {
     if (!profile) return undefined;
 
-    const normalizedSeller = normalizeSellerName(profile.fullName);
-    const realtimeFilter =
-      profile.role === 'admin' || !normalizedSeller ? undefined : buildRealtimeEqFilter('Vendedor', normalizedSeller);
-    const channelSellerToken = buildChannelSellerToken(normalizedSeller);
+    const channelSellerToken = buildChannelSellerToken(profile.fullName || profile.role || 'all');
 
     setRealtimeStatus('CONNECTING');
     const channel = supabase
@@ -335,17 +358,12 @@ export default function Clientes() {
         {
           event: 'UPDATE',
           schema: 'public',
-          table: 'customers',
-          ...(realtimeFilter ? { filter: realtimeFilter } : {})
+          table: 'customers'
         },
         (payload) => {
           const cardCode = payload?.new?.CardCode;
           const previousLocalItem = cardCode ? clientesRef.current.find((item) => item?.CardCode === cardCode) : null;
           const knownBlocked = cardCode ? blockedStateRef.current.get(cardCode) : '';
-          const sellerFromPayload = normalizeSellerName(
-            String(payload?.new?.Vendedor || payload?.old?.Vendedor || previousLocalItem?.Vendedor || '')
-          );
-          if (profile.role !== 'admin' && sellerFromPayload !== normalizedSeller) return;
 
           const oldBlocked = normalizeSellerName(
             String(payload?.old?.Bloqueado || knownBlocked || previousLocalItem?.Bloqueado || '')
@@ -356,16 +374,10 @@ export default function Clientes() {
           }
 
           if (oldBlocked === 'Y' && newBlocked === 'N') {
-            const customerName =
-              payload?.new?.CardFName || payload?.new?.CardName || payload?.new?.CardCode || 'Cliente sin nombre';
-            const notificationItem = {
-              id: `${payload?.new?.CardCode || 'cliente'}-${Date.now()}`,
-              customerName,
+            pushUnlockNotification({
               cardCode: payload?.new?.CardCode || '',
-              createdAt: new Date().toISOString(),
-              read: false
-            };
-            setUnlockNotifications((prev) => [notificationItem, ...prev].slice(0, MAX_UNLOCK_NOTIFICATIONS));
+              customerName: payload?.new?.CardFName || payload?.new?.CardName || payload?.new?.CardCode
+            });
           }
 
           if (!payload?.new?.CardCode) return;
@@ -383,7 +395,7 @@ export default function Clientes() {
             realtimeErrorRef.current = errorText;
             console.error('Realtime customers channel error:', {
               status,
-              filter: realtimeFilter || '(none)',
+              filter: '(none)',
               reason: errorText
             });
           }
@@ -393,26 +405,20 @@ export default function Clientes() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [profile]);
+  }, [profile, pushUnlockNotification]);
 
   useEffect(() => {
     if (!profile || realtimeStatus === 'SUBSCRIBED' || !isFocused) return undefined;
 
-    const normalizedSeller = normalizeSellerName(profile.fullName);
     const pollForUnlockChanges = async () => {
       try {
         let query = supabase
           .from('customers')
           .select('CardCode, CardName, CardFName, Vendedor, Bloqueado')
           .not('Nivel', 'ilike', 'EMPLEADOS');
-
-        if (profile.role !== 'admin') {
-          query = query.eq('Vendedor', normalizedSeller);
-        } else {
-          const loadedCardCodes = Array.from(new Set((clientesRef.current || []).map((item) => item?.CardCode).filter(Boolean)));
-          if (loadedCardCodes.length === 0) return;
-          query = query.in('CardCode', loadedCardCodes);
-        }
+        const loadedCardCodes = Array.from(new Set((clientesRef.current || []).map((item) => item?.CardCode).filter(Boolean)));
+        if (loadedCardCodes.length === 0) return;
+        query = query.in('CardCode', loadedCardCodes);
 
         const { data, error } = await query;
         if (error) throw error;
@@ -424,15 +430,10 @@ export default function Clientes() {
           const nextBlocked = normalizeSellerName(String(row?.Bloqueado || ''));
 
           if (prevBlocked === 'Y' && nextBlocked === 'N') {
-            const customerName = row?.CardFName || row?.CardName || cardCode;
-            const notificationItem = {
-              id: `${cardCode}-${Date.now()}`,
-              customerName,
+            pushUnlockNotification({
               cardCode,
-              createdAt: new Date().toISOString(),
-              read: false
-            };
-            setUnlockNotifications((prev) => [notificationItem, ...prev].slice(0, MAX_UNLOCK_NOTIFICATIONS));
+              customerName: row?.CardFName || row?.CardName || cardCode
+            });
           }
 
           blockedStateRef.current.set(cardCode, nextBlocked);
@@ -446,9 +447,9 @@ export default function Clientes() {
     const intervalId = setInterval(pollForUnlockChanges, 30000);
 
     return () => clearInterval(intervalId);
-  }, [profile, realtimeStatus, isFocused]);
+  }, [profile, realtimeStatus, isFocused, pushUnlockNotification]);
 
-  const fetchClientes = async (reset = false, currentProfile = profile, searchTerm = debouncedSearch) => {
+  const fetchClientes = useCallback(async (reset = false, currentProfile = profile, searchTerm = debouncedSearch) => {
     const startedAt = Date.now();
 
     try {
@@ -477,9 +478,6 @@ export default function Clientes() {
         .order('Nivel', { ascending: true })
         .range(from, to);
 
-      if (currentProfile.role !== 'admin') {
-        query = query.eq('Vendedor', normalizeSellerName(currentProfile.fullName));
-      }
       if (normalizedSearch) {
         const likeTerm = `%${querySearch}%`;
         query = query.or(
@@ -518,7 +516,7 @@ export default function Clientes() {
         setLoadingMore(false);
       }
     }
-  };
+  }, [clientes, debouncedSearch, hasMore, loadingMore, profile]);
 
   useEffect(() => {
     clientesRef.current = Array.isArray(clientes) ? clientes : [];
@@ -544,11 +542,12 @@ export default function Clientes() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch, profile]);
 
-  const handleLoadMore = () => {
+  const handleLoadMore = useCallback(() => {
     if (loading || loadingMore || !hasMore || !profile || !Array.isArray(clientes)) return;
     fetchClientes(false, profile, debouncedSearch);
-  };
-  const handleRefresh = async () => {
+  }, [clientes, debouncedSearch, fetchClientes, hasMore, loading, loadingMore, profile]);
+
+  const handleRefresh = useCallback(async () => {
     if (!profile) return;
     try {
       setRefreshing(true);
@@ -557,26 +556,32 @@ export default function Clientes() {
     } finally {
       setRefreshing(false);
     }
-  };
+  }, [debouncedSearch, fetchClientes, profile]);
 
-  const openNotifications = () => {
+  const openNotifications = useCallback(() => {
     setUnlockNotifications((prev) => prev.map((item) => ({ ...item, read: true })));
     setNotificationsVisible(true);
-  };
+  }, []);
 
-  const closeNotifications = () => {
+  const clearNotifications = useCallback(() => {
+    unlockNotificationIndexRef.current = new Map();
+    setUnlockNotifications([]);
+  }, []);
+
+  const closeNotifications = useCallback(() => {
     setNotificationsVisible(false);
-  };
+  }, []);
 
-  const openClientInfo = (item) => {
+  const openClientInfo = useCallback((item) => {
     setSelectedClient(item);
     detailsSheetRef.current?.present();
-  };
+  }, []);
 
-  const closeClientInfo = () => {
+  const closeClientInfo = useCallback(() => {
     detailsSheetRef.current?.dismiss();
-  };
-  const handleOpenCatalog = (item) => {
+  }, []);
+
+  const handleOpenCatalog = useCallback((item) => {
     if (isClientBlocked(item)) {
       Alert.alert('Cliente bloqueado', 'No puedes crear pedidos para este cliente mientras este bloqueado.');
       return;
@@ -591,7 +596,7 @@ export default function Clientes() {
         idRuta: item.IDRuta || item.IdRuta || item.Ruta || ''
       }
     });
-  };
+  }, [router]);
 
   const balanceValue = Number(selectedClient?.Balance);
   const hasValidBalance = Number.isFinite(balanceValue);
@@ -670,6 +675,8 @@ export default function Clientes() {
         data={clientes}
         onPressCustomer={handleOpenCatalog}
         onPressInfo={openClientInfo}
+        viewerRole={profile?.role || 'vendedor'}
+        viewerSellerName={profile?.fullName || ''}
         onEndReached={handleLoadMore}
         loadingMore={loadingMore}
         hasMore={hasMore}
@@ -758,9 +765,14 @@ export default function Clientes() {
             <View style={styles.notificationsPanelContent}>
               <View style={styles.notificationsHeader}>
                 <Text style={styles.notificationsTitle}>Notificaciones</Text>
-                <Button compact onPress={closeNotifications}>
-                  Cerrar
-                </Button>
+                <View style={styles.notificationsHeaderActions}>
+                  <Button compact onPress={clearNotifications} disabled={unlockNotifications.length === 0}>
+                    Limpiar
+                  </Button>
+                  <Button compact onPress={closeNotifications}>
+                    Cerrar
+                  </Button>
+                </View>
               </View>
               <Divider />
               <View style={styles.notificationsBody}>
@@ -775,6 +787,7 @@ export default function Clientes() {
                         <Text style={styles.notificationSubtitle}>
                           Cliente desbloqueado{item.cardCode ? ` (${item.cardCode})` : ''}
                         </Text>
+                        <Text style={styles.notificationTime}>{formatNotificationTime(item.createdAt)}</Text>
                       </View>
                     </View>
                   ))
@@ -899,6 +912,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between'
   },
+  notificationsHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2
+  },
   notificationsTitle: {
     fontSize: 16,
     fontWeight: '700',
@@ -938,6 +956,11 @@ const styles = StyleSheet.create({
   notificationSubtitle: {
     marginTop: 2,
     fontSize: 12,
+    color: COLORS.textLight
+  },
+  notificationTime: {
+    marginTop: 2,
+    fontSize: 11,
     color: COLORS.textLight
   },
   sheetBackground: { backgroundColor: '#FFF' },

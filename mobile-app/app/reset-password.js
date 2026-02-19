@@ -34,6 +34,7 @@ const parseAuthTokensFromUrl = (url = '') => {
   return {
     access_token: params.get('access_token') || '',
     refresh_token: params.get('refresh_token') || '',
+    code: params.get('code') || '',
     type: params.get('type') || ''
   };
 };
@@ -51,6 +52,15 @@ export default function ResetPasswordScreen() {
     if (typeof params?.url === 'string') return params.url;
     return '';
   }, [params]);
+  const paramAuthPayload = useMemo(
+    () => ({
+      access_token: typeof params?.access_token === 'string' ? params.access_token : '',
+      refresh_token: typeof params?.refresh_token === 'string' ? params.refresh_token : '',
+      code: typeof params?.code === 'string' ? params.code : '',
+      type: typeof params?.type === 'string' ? params.type : ''
+    }),
+    [params]
+  );
 
   const {
     control,
@@ -64,26 +74,41 @@ export default function ResetPasswordScreen() {
   useEffect(() => {
     let mounted = true;
 
-    const trySetSessionFromUrl = async (url) => {
-      const { access_token, refresh_token, type } = parseAuthTokensFromUrl(url);
-      if (!access_token || !refresh_token || (type && type !== 'recovery')) return false;
+    const trySetSessionFromPayload = async (payload = {}) => {
+      const accessToken = String(payload?.access_token || '').trim();
+      const refreshToken = String(payload?.refresh_token || '').trim();
+      const code = String(payload?.code || '').trim();
+      const type = String(payload?.type || '').trim().toLowerCase();
+      if (type && type !== 'recovery') return false;
 
-      const { error } = await supabase.auth.setSession({ access_token, refresh_token });
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+        return !error;
+      }
+
+      if (!accessToken || !refreshToken) return false;
+      const { error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
       return !error;
+    };
+
+    const trySetSessionFromUrl = async (url) => {
+      const payload = parseAuthTokensFromUrl(url);
+      return trySetSessionFromPayload(payload);
     };
 
     const checkSession = async () => {
       try {
         const initialUrl = await Linking.getInitialURL();
         const fromInitial = await trySetSessionFromUrl(initialUrl || '');
-        const fromParam = await trySetSessionFromUrl(paramUrl);
+        const fromParamUrl = await trySetSessionFromUrl(paramUrl);
+        const fromRouteParams = await trySetSessionFromPayload(paramAuthPayload);
 
         const {
           data: { session }
         } = await supabase.auth.getSession();
 
         if (!mounted) return;
-        setCanReset(Boolean(session) || fromInitial || fromParam);
+        setCanReset(Boolean(session) || fromInitial || fromParamUrl || fromRouteParams);
       } catch (_error) {
         if (!mounted) return;
         setCanReset(false);
@@ -103,7 +128,7 @@ export default function ResetPasswordScreen() {
       mounted = false;
       subscription?.remove?.();
     };
-  }, [paramUrl]);
+  }, [paramAuthPayload, paramUrl]);
 
   const handleResetPassword = handleSubmit(async ({ newPassword }) => {
     try {
