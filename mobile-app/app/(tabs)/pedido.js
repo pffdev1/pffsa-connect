@@ -611,69 +611,128 @@ export default function Pedido() {
         minute: '2-digit'
       });
 
+      const placeholder = 'https://uploadimage.pedersenfinefoods.com/noimage-placeholder2.png';
+      const logoUrl = 'https://uploadimage.pedersenfinefoods.com/mainlogo.png';
+      const safeCustomer = `${orderCustomerName || 'Sin nombre'}${orderCustomerCode ? ` (${orderCustomerCode})` : ''}`;
+      const orderTotal = Number(getTotal() || 0);
+
       const rowsHtml = cart
-        .map((item, index) => {
+        .map((item) => {
           const code = escapeHtml(item?.ItemCode || '');
           const name = escapeHtml(item?.ItemName || '');
+          const uom = escapeHtml(String(item?.UOM || item?.uom || '').trim());
           const qty = Number(item?.quantity || 0);
           const price = Number(item?.Price || 0);
           const subtotal = qty * price;
+          const rawImageUrl = resolveCartImageUrl(item);
+          const imageUrl = escapeHtml(String(rawImageUrl || '').trim() || placeholder);
+
           return `
-            <tr>
-              <td>${index + 1}</td>
-              <td>${code}</td>
-              <td>${name}</td>
-              <td style="text-align:right;">${qty}</td>
-              <td style="text-align:right;">$${price.toFixed(2)}</td>
-              <td style="text-align:right;">$${subtotal.toFixed(2)}</td>
+            <tr class="row-item">
+              <td style="padding:6px; vertical-align:middle;">
+                <div style="font-weight:700; line-height:1.2;">${name}</div>
+                <div style="font-size:10px; color:#666; margin-top:2px;">Item: ${code}</div>
+              </td>
+              <td class="text-center"><img src="${imageUrl}" class="img-thumb" width="58" height="58" /></td>
+              <td class="text-center">${qty}${uom ? ` ${uom}` : ''}</td>
+              <td class="text-right">$ ${price.toFixed(2)}</td>
+              <td class="text-right">$ ${subtotal.toFixed(2)}</td>
             </tr>
           `;
         })
         .join('');
 
       const html = `
-        <html>
-          <head>
-            <meta charset="utf-8" />
-            <style>
-              body { font-family: Arial, sans-serif; padding: 18px; color: #1f2937; }
-              .brand { margin: 0 0 2px; font-size: 20px; font-weight: 700; color: #0b4b88; }
-              h1 { margin: 0 0 6px; font-size: 16px; color: #0b4b88; }
-              .meta { margin-bottom: 12px; font-size: 12px; color: #4b5563; }
-              table { width: 100%; border-collapse: collapse; font-size: 12px; }
-              th, td { border: 1px solid #d1d5db; padding: 6px; vertical-align: top; }
-              th { background: #eef2f7; text-align: left; }
-              .totals { margin-top: 10px; font-size: 14px; text-align: right; font-weight: bold; color: #0b4b88; }
-              .footer-note { margin-top: 22px; font-size: 11px; color: #4b5563; text-align: center; }
-            </style>
-          </head>
-          <body>
-            <div class="brand">Pedersen Fine Foods</div>
-            <h1>Resumen de Carrito</h1>
-            <div class="meta">
-              Cliente: ${escapeHtml(orderCustomerName || 'Sin nombre')} ${escapeHtml(orderCustomerCode ? `(${orderCustomerCode})` : '')}<br/>
-              Fecha: ${escapeHtml(createdAt)}<br/>
-              Lineas: ${cart.length}
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    :root { --brand:#0b4b88; }
+    body { font-family: Arial, sans-serif; font-size:12px; color:#333; margin:0; padding:0; }
+    .main-table { width:100%; border-collapse:collapse; }
+    thead { display: table-header-group; }
+    .header-container { border-bottom:3px solid var(--brand); padding-bottom:10px; margin-bottom:14px; width:100%; }
+    .header-flex { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+    .header-info { width:66%; }
+    .header-logo { width:30%; text-align:right; }
+    .logo { max-width:150px; max-height:58px; }
+    .title { font-size:18px; font-weight:700; color:var(--brand); margin-bottom:6px; }
+    .data-box { border:1px solid #ddd; border-radius:4px; padding:8px; line-height:1.45; font-size:11px; }
+    .items-table { width:100%; border-collapse:collapse; margin-top:8px; }
+    .items-table th { background:var(--brand); color:#fff; padding:8px; text-align:left; font-size:11px; }
+    .items-table td { border:1px solid #eee; padding:6px; }
+    .row-item { page-break-inside: avoid !important; break-inside: avoid !important; }
+    .totals-wrapper { width:100%; margin-top:14px; page-break-inside:avoid; }
+    .totals-table { width:35%; float:right; border-collapse:collapse; }
+    .totals-table td { padding:4px 8px; background:#f9f9f9; border-bottom:1px solid #eee; }
+    .totals-table tr:last-child td { border-top:2px solid var(--brand); font-weight:700; background:#f0f6fb; color:var(--brand); }
+    .footer-note { text-align:center; color:#dd052b; margin-top:22px; font-size:11px; border-top:1px solid #eee; padding-top:10px; page-break-inside:avoid; }
+    .img-thumb { object-fit:contain; display:block; margin:0 auto; border-radius:6px; }
+    .text-right { text-align:right; }
+    .text-center { text-align:center; }
+    .footer { position:fixed; bottom:0; width:100%; padding:10px 0; background:#fff; border-top:1px solid #eee; }
+    .footer-address { font-size:9px; color:#888; text-align:center; }
+    @page { margin:15mm 15mm 25mm 15mm; }
+  </style>
+</head>
+<body>
+  <table class="main-table">
+    <thead>
+      <tr>
+        <td>
+          <div class="header-container">
+            <div class="header-flex">
+              <div class="header-info">
+                <div class="title">RESUMEN DE PEDIDO</div>
+                <div class="data-box">
+                  <div><strong>Cliente:</strong> ${escapeHtml(safeCustomer)}</div>
+                  <div><strong>Fecha:</strong> ${escapeHtml(createdAt)}</div>
+                  <div><strong>Lineas:</strong> ${cart.length}</div>
+                </div>
+              </div>
+              <div class="header-logo">
+                <img src="${escapeHtml(logoUrl)}" class="logo" />
+              </div>
             </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>SKU</th>
-                  <th>Descripcion</th>
-                  <th>Cant.</th>
-                  <th>Precio</th>
-                  <th>Subtotal</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rowsHtml}
-              </tbody>
+          </div>
+        </td>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          <table class="items-table">
+            <thead>
+              <tr>
+                <th style="width:45%;">Producto</th>
+                <th class="text-center">Foto</th>
+                <th class="text-center">Cant.</th>
+                <th class="text-right">Precio</th>
+                <th class="text-right">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+          </table>
+          <div class="totals-wrapper">
+            <table class="totals-table">
+              <tr><td>Subtotal:</td><td class="text-right">$ ${orderTotal.toFixed(2)}</td></tr>
+              <tr><td>Total:</td><td class="text-right">$ ${orderTotal.toFixed(2)}</td></tr>
             </table>
-            <div class="totals">Total: $${getTotal().toFixed(2)}</div>
-            <div class="footer-note">Cotizacion valida por 7 dias.</div>
-          </body>
-        </html>
+          </div>
+          <div style="clear:both;"></div>
+          <div class="footer-note"><strong>Nota: Cotizacion valida por 7 dias calendario.</strong></div>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="footer">
+    <div class="footer-address">Ave. Cincuentenario, Edificio Pedersen Fine Foods, Ciudad de Panama</div>
+  </div>
+</body>
+</html>
       `;
 
       const { uri } = await Print.printToFileAsync({ html });

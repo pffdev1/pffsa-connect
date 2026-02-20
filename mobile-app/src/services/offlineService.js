@@ -2,9 +2,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from './supabaseClient';
 
 const ORDER_QUEUE_KEY = 'offline:pending-orders:v1';
-const MAX_QUEUE_ATTEMPTS = 5;
 const MAX_QUEUE_ITEMS = 100;
 const OPTIONAL_RPC_PARAMS = ['p_client_order_id', 'p_comments'];
+const RETRYABLE_ERROR_CODES = new Set(['network', 'timeout', 'session_expired', 'server']);
+const ORDER_RETRY_COOLDOWN_MS = 15000;
 
 let flushInFlightPromise = null;
 
@@ -84,7 +85,15 @@ export const classifyOrderError = (error) => {
 };
 
 export const shouldKeepOrderInQueue = (errorCode) =>
-  errorCode === 'network' || errorCode === 'timeout' || errorCode === 'session_expired' || errorCode === 'server';
+  RETRYABLE_ERROR_CODES.has(String(errorCode || '').trim());
+
+const shouldRetryQueueItemNow = (item) => {
+  const status = String(item?.status || 'queued').trim().toLowerCase();
+  if (status === 'blocked') return false;
+  const nextRetryAtMs = Date.parse(String(item?.nextRetryAt || ''));
+  if (Number.isFinite(nextRetryAtMs) && nextRetryAtMs > Date.now()) return false;
+  return true;
+};
 
 export const getOrderErrorMessage = (error) => {
   const code = classifyOrderError(error);
@@ -151,6 +160,7 @@ export const enqueuePendingOrder = async ({ rpcPayload, cardCode, customerName }
     updatedAt: timestamp,
     attempts: 0,
     status: 'queued',
+    nextRetryAt: null,
     cardCode: normalizeText(cardCode),
     customerName: normalizeText(customerName),
     lastErrorCode: null,
@@ -176,15 +186,17 @@ export const markPendingOrderError = async (localOrderId, error) => {
   const pending = (await getPendingOrders()) || [];
   const errorCode = classifyOrderError(error);
   const errorMessage = getOrderErrorMessage(error);
+  const retryable = shouldKeepOrderInQueue(errorCode);
   const next = pending.map((item) => {
     if (item?.id !== localOrderId) return item;
 
     const currentAttempts = Number(item?.attempts || 0);
-    const nextAttempts = errorCode === 'session_expired' ? currentAttempts : currentAttempts + 1;
+    const nextAttempts = currentAttempts + 1;
     return {
       ...item,
       attempts: nextAttempts,
-      status: 'error',
+      status: retryable ? 'error' : 'blocked',
+      nextRetryAt: retryable ? new Date(Date.now() + ORDER_RETRY_COOLDOWN_MS).toISOString() : null,
       lastErrorCode: errorCode,
       lastErrorMessage: errorMessage,
       updatedAt: nowIso()
@@ -202,24 +214,39 @@ const flushPendingOrdersInternal = async () => {
   let failed = 0;
 
   for (const item of pending) {
+    if (!shouldRetryQueueItemNow(item)) {
+      remaining.push(item);
+      continue;
+    }
+
     try {
       await runCreateSalesOrderRpc(item.rpcPayload);
       sent += 1;
     } catch (error) {
       const errorCode = classifyOrderError(error);
-      const currentAttempts = Number(item?.attempts || 0);
-      const nextAttempts = errorCode === 'session_expired' ? currentAttempts : currentAttempts + 1;
-      const canRetry = nextAttempts < MAX_QUEUE_ATTEMPTS;
-      if (shouldKeepOrderInQueue(errorCode) && canRetry) {
+      const retryable = shouldKeepOrderInQueue(errorCode);
+      const nextAttempts = Number(item?.attempts || 0) + 1;
+
+      if (retryable) {
         remaining.push({
           ...item,
           attempts: nextAttempts,
           status: 'error',
+          nextRetryAt: new Date(Date.now() + ORDER_RETRY_COOLDOWN_MS).toISOString(),
           lastErrorCode: errorCode,
           lastErrorMessage: getOrderErrorMessage(error),
           updatedAt: nowIso()
         });
       } else {
+        remaining.push({
+          ...item,
+          attempts: nextAttempts,
+          status: 'blocked',
+          nextRetryAt: null,
+          lastErrorCode: errorCode,
+          lastErrorMessage: getOrderErrorMessage(error),
+          updatedAt: nowIso()
+        });
         failed += 1;
       }
     }

@@ -49,6 +49,10 @@ const resolveOrderStatus = (status = '') => {
   const normalized = String(status).trim().toLowerCase();
   if (normalized === 'sent') return { label: 'Enviado', color: '#27AE60' };
   if (normalized === 'pending') return { label: 'Pendiente', color: '#F39C12' };
+  if (normalized === 'processing') return { label: 'Procesando', color: '#2F80ED' };
+  if (normalized === 'draft') return { label: 'Borrador', color: '#8E9AAF' };
+  if (normalized === 'blocked') return { label: 'Bloqueado', color: '#D35400' };
+  if (normalized === 'queued') return { label: 'En cola', color: '#16A085' };
   if (normalized === 'error') return { label: 'Con error', color: '#E74C3C' };
   return { label: status || 'Sin estado', color: COLORS.textLight };
 };
@@ -113,6 +117,8 @@ export default function Perfil() {
   const [loadingMoreOrders, setLoadingMoreOrders] = useState(false);
   const [activeTab, setActiveTab] = useState('pedidos');
   const [orderDetailVisible, setOrderDetailVisible] = useState(false);
+  const [orderStatusDetailVisible, setOrderStatusDetailVisible] = useState(false);
+  const [selectedOrderStatus, setSelectedOrderStatus] = useState(null);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [selectedOrderCustomerName, setSelectedOrderCustomerName] = useState('');
   const [orderLines, setOrderLines] = useState([]);
@@ -294,7 +300,7 @@ export default function Perfil() {
       setOrdersLoading(true);
       const { data: orders, error: ordersError } = await supabase
         .from('sales_orders')
-        .select('id, card_code, status, sap_docnum, created_at, doc_due_date')
+        .select('id, card_code, status, sap_docnum, created_at, doc_due_date, last_error')
         .eq('created_by', userId)
         .order('created_at', { ascending: false })
         .range(0, ORDERS_PAGE_SIZE - 1);
@@ -330,7 +336,7 @@ export default function Perfil() {
 
         const { data: orders, error: ordersError } = await supabase
           .from('sales_orders')
-          .select('id, card_code, status, sap_docnum, created_at, doc_due_date')
+          .select('id, card_code, status, sap_docnum, created_at, doc_due_date, last_error')
           .eq('created_by', userId)
           .order('created_at', { ascending: false })
           .range(from, to);
@@ -455,6 +461,46 @@ export default function Perfil() {
     if (!authUserId) return;
     await loadOrders(authUserId, { reset: false });
   };
+
+  const closeOrderStatusDetail = useCallback(() => {
+    setOrderStatusDetailVisible(false);
+    setSelectedOrderStatus(null);
+  }, []);
+
+  const handleShowOrderStatus = useCallback((order) => {
+    const safeStatus = String(order?.status || '').trim().toLowerCase();
+    const safeError = String(order?.last_error || '').trim();
+    const statusInfo = resolveOrderStatus(safeStatus);
+
+    let message = '';
+    if (safeError) {
+      message = safeError;
+    } else if (safeStatus === 'sent') {
+      message = 'El pedido fue enviado correctamente a SAP.';
+    } else if (safeStatus === 'pending') {
+      message = 'El pedido esta pendiente de envio al integrador SAP.';
+    } else if (safeStatus === 'processing') {
+      message = 'El pedido esta en proceso de envio a SAP.';
+    } else if (safeStatus === 'draft') {
+      message = 'El pedido esta guardado como borrador.';
+    } else if (safeStatus === 'blocked') {
+      message = 'El pedido esta bloqueado y requiere correccion manual.';
+    } else if (safeStatus === 'queued') {
+      message = 'El pedido esta en cola para envio automatico.';
+    } else if (safeStatus === 'error') {
+      message = 'Ocurrio un error al enviar el pedido.';
+    } else {
+      message = 'Sin detalle adicional para este estado.';
+    }
+
+    setSelectedOrderStatus({
+      label: statusInfo.label,
+      color: statusInfo.color,
+      message,
+      status: safeStatus || 'sin_estado'
+    });
+    setOrderStatusDetailVisible(true);
+  }, []);
 
   const loadOrderLines = useCallback(
     async (orderId) => {
@@ -622,7 +668,7 @@ export default function Perfil() {
 
       const { data, error } = await supabase
         .from('sales_orders')
-        .select('id, card_code, status, sap_docnum, created_at')
+        .select('id, card_code, status, sap_docnum, created_at, last_error')
         .eq('created_by', sellerId)
         .order('created_at', { ascending: false })
         .limit(40);
@@ -757,9 +803,15 @@ export default function Perfil() {
                   <Text style={styles.orderDate}>{formatDateTime(order?.created_at)}</Text>
                 </View>
                 <View style={styles.orderRightWrap}>
-                  <View style={[styles.statusPill, { backgroundColor: `${statusInfo.color}22` }]}>
+                  <Pressable
+                    style={[styles.statusPill, { backgroundColor: `${statusInfo.color}22` }]}
+                    onPress={(event) => {
+                      event?.stopPropagation?.();
+                      handleShowOrderStatus(order);
+                    }}
+                  >
                     <Text style={[styles.statusPillText, { color: statusInfo.color }]}>{statusInfo.label}</Text>
-                  </View>
+                  </Pressable>
                   <Ionicons name="chevron-forward" size={16} color={COLORS.textLight} />
                 </View>
               </Pressable>
@@ -1097,14 +1149,43 @@ export default function Perfil() {
                           </Text>
                           <Text style={styles.sellerOrderMeta}>{formatDateTime(item?.created_at)}</Text>
                         </View>
-                        <View style={[styles.statusPill, { backgroundColor: `${statusInfo.color}22` }]}>
+                        <Pressable
+                          style={[styles.statusPill, { backgroundColor: `${statusInfo.color}22` }]}
+                          onPress={() => handleShowOrderStatus(item)}
+                        >
                           <Text style={[styles.statusPillText, { color: statusInfo.color }]}>{statusInfo.label}</Text>
-                        </View>
+                        </Pressable>
                       </View>
                     );
                   }}
                 />
               )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={orderStatusDetailVisible} transparent animationType="fade" onRequestClose={closeOrderStatusDetail}>
+        <View style={styles.detailBackdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={closeOrderStatusDetail} />
+          <View style={styles.statusModalPanel}>
+            <View style={styles.statusModalHeader}>
+              <Text style={styles.statusModalTitle}>Detalle de estado</Text>
+              <Pressable
+                style={[styles.statusModalBadge, { backgroundColor: `${selectedOrderStatus?.color || COLORS.textLight}22` }]}
+              >
+                <Text style={[styles.statusModalBadgeText, { color: selectedOrderStatus?.color || COLORS.textLight }]}>
+                  {selectedOrderStatus?.label || 'Sin estado'}
+                </Text>
+              </Pressable>
+            </View>
+            <ScrollView style={styles.statusModalBody} contentContainerStyle={styles.statusModalBodyContent}>
+              <Text style={styles.statusModalMessage}>{selectedOrderStatus?.message || 'Sin detalle disponible.'}</Text>
+            </ScrollView>
+            <View style={styles.statusModalFooter}>
+              <Button mode="contained" buttonColor={COLORS.primary} onPress={closeOrderStatusDetail}>
+                CERRAR
+              </Button>
             </View>
           </View>
         </View>
@@ -1294,5 +1375,50 @@ const styles = StyleSheet.create({
   },
   sellerOrderMain: { flex: 1, marginRight: 8 },
   sellerOrderTitle: { color: COLORS.text, fontSize: 13, fontWeight: '700' },
-  sellerOrderMeta: { color: COLORS.textLight, fontSize: 12, marginTop: 2 }
+  sellerOrderMeta: { color: COLORS.textLight, fontSize: 12, marginTop: 2 },
+  statusModalPanel: {
+    width: '100%',
+    maxWidth: 520,
+    maxHeight: '72%',
+    backgroundColor: '#FFF',
+    borderRadius: 14,
+    padding: 14
+  },
+  statusModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10
+  },
+  statusModalTitle: {
+    color: COLORS.primary,
+    fontSize: 16,
+    fontWeight: '800',
+    flex: 1
+  },
+  statusModalBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5
+  },
+  statusModalBadgeText: {
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  statusModalBody: {
+    marginTop: 12,
+    maxHeight: 260
+  },
+  statusModalBodyContent: {
+    paddingBottom: 6
+  },
+  statusModalMessage: {
+    color: COLORS.text,
+    fontSize: 13,
+    lineHeight: 20
+  },
+  statusModalFooter: {
+    marginTop: 14,
+    alignItems: 'flex-end'
+  }
 });
