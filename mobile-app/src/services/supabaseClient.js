@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Expo detecta automaticamente las variables que empiezan con EXPO_PUBLIC_
@@ -9,13 +10,24 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Supabase env vars are missing. Check EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY.');
 }
 
+const isWeb = Platform.OS === 'web';
+const isBrowser = typeof window !== 'undefined';
+
+const authConfig = isWeb
+  ? {
+      autoRefreshToken: true,
+      persistSession: isBrowser,
+      detectSessionInUrl: false
+    }
+  : {
+      storage: AsyncStorage,
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: false
+    };
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    storage: AsyncStorage,
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: false
-  }
+  auth: authConfig
 });
 
 export const isInvalidRefreshTokenError = (error) => {

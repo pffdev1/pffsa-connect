@@ -16,6 +16,7 @@ import {
 } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { clearLocalSupabaseSession, isInvalidRefreshTokenError, supabase } from '../../src/services/supabaseClient';
+import { flushPendingOrders, getCachedJson } from '../../src/services/offlineService';
 import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
 
 const passwordSchema = z
@@ -190,6 +191,65 @@ export default function Perfil() {
     };
   }, []);
 
+  const attachCustomerNamesToOrders = useCallback(async (orders) => {
+    const rows = Array.isArray(orders) ? orders : [];
+    if (rows.length === 0) return [];
+
+    const normalizeCardCode = (value) => String(value || '').trim().toUpperCase();
+    const cardCodes = Array.from(new Set(rows.map((row) => normalizeCardCode(row?.card_code)).filter(Boolean)));
+    if (cardCodes.length === 0) return rows;
+
+    const namesByCode = new Map();
+
+    try {
+      const queryAttempts = [
+        { select: 'CardCode, CardFName, CardName', inCol: 'CardCode' },
+        { select: 'card_code, card_f_name, card_name', inCol: 'card_code' }
+      ];
+
+      for (const attempt of queryAttempts) {
+        const result = await supabase.from('customers').select(attempt.select).in(attempt.inCol, cardCodes);
+        if (result.error) continue;
+
+        (result.data || []).forEach((row) => {
+          const code = normalizeCardCode(row?.CardCode || row?.card_code);
+          if (!code) return;
+          const name = String(row?.CardFName || row?.CardName || row?.card_f_name || row?.card_name || '').trim();
+          if (!name) return;
+          namesByCode.set(code, name);
+        });
+        break;
+      }
+    } catch (_error) {
+      // Fallback to local cache below.
+    }
+
+    const missingCodes = cardCodes.filter((code) => !namesByCode.has(code));
+    if (missingCodes.length > 0 && authUserId) {
+      try {
+        const cacheKey = `offline:clientes:first_page:${authUserId}:${role || 'vendedor'}`;
+        const cachedCustomers = await getCachedJson(cacheKey, []);
+        (Array.isArray(cachedCustomers) ? cachedCustomers : []).forEach((row) => {
+          const code = normalizeCardCode(row?.CardCode || row?.card_code);
+          if (!code || !missingCodes.includes(code)) return;
+          const name = String(row?.CardFName || row?.CardName || row?.card_f_name || row?.card_name || '').trim();
+          if (!name) return;
+          namesByCode.set(code, name);
+        });
+      } catch (_error) {
+        // Keep going with resolved names.
+      }
+    }
+
+    return rows.map((order) => {
+      const code = normalizeCardCode(order?.card_code);
+      return {
+        ...order,
+        customer_name: namesByCode.get(code) || String(order?.customer_name || '').trim()
+      };
+    });
+  }, [authUserId, role]);
+
   const loadAdminDashboard = useCallback(async () => {
     try {
       setAdminLoading(true);
@@ -241,7 +301,7 @@ export default function Perfil() {
 
       if (ordersError) throw ordersError;
 
-      const rows = orders || [];
+      const rows = await attachCustomerNamesToOrders(orders || []);
       setRecentOrders(rows);
       setHasMoreOrders(rows.length === ORDERS_PAGE_SIZE);
       setOrdersNextFrom(rows.length);
@@ -252,7 +312,7 @@ export default function Perfil() {
     } finally {
       setOrdersLoading(false);
     }
-  }, []);
+  }, [attachCustomerNamesToOrders]);
 
   const loadOrders = useCallback(
     async (userId, { reset: shouldReset = false } = {}) => {
@@ -277,7 +337,7 @@ export default function Perfil() {
 
         if (ordersError) throw ordersError;
 
-        const rows = orders || [];
+        const rows = await attachCustomerNamesToOrders(orders || []);
         setRecentOrders((prev) => [...prev, ...rows]);
         setHasMoreOrders(rows.length === ORDERS_PAGE_SIZE);
         setOrdersNextFrom(from + rows.length);
@@ -287,7 +347,7 @@ export default function Perfil() {
         setLoadingMoreOrders(false);
       }
     },
-    [hasMoreOrders, loadingMoreOrders, ordersNextFrom, refreshOrdersFirstPage]
+    [hasMoreOrders, loadingMoreOrders, ordersNextFrom, refreshOrdersFirstPage, attachCustomerNamesToOrders]
   );
 
   const loadPerfil = useCallback(
@@ -301,6 +361,11 @@ export default function Perfil() {
 
         if (userError || !user?.id) throw new Error('Sin sesion');
         setAuthUserId(user.id);
+        try {
+          await flushPendingOrders();
+        } catch (_error) {
+          // Keep loading profile even if background order sync fails.
+        }
 
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
@@ -358,11 +423,25 @@ export default function Perfil() {
   useFocusEffect(
     useCallback(() => {
       if (!authUserId) return undefined;
-      refreshOrdersFirstPage(authUserId);
-      if (role === 'admin') {
-        loadAdminDashboard();
-      }
-      return undefined;
+      let active = true;
+
+      const syncAndRefresh = async () => {
+        try {
+          await flushPendingOrders();
+        } catch (_error) {
+          // Ignore transient sync errors on focus refresh.
+        }
+        if (!active) return;
+        await refreshOrdersFirstPage(authUserId);
+        if (role === 'admin') {
+          await loadAdminDashboard();
+        }
+      };
+
+      syncAndRefresh();
+      return () => {
+        active = false;
+      };
     }, [authUserId, role, loadAdminDashboard, refreshOrdersFirstPage])
   );
 
@@ -549,14 +628,15 @@ export default function Perfil() {
         .limit(40);
 
       if (error) throw error;
-      setSelectedSellerOrders(data || []);
+      const rows = await attachCustomerNamesToOrders(data || []);
+      setSelectedSellerOrders(rows);
     } catch (_error) {
       setSelectedSellerOrders([]);
       setSellerOrdersError('No se pudieron cargar los pedidos del vendedor.');
     } finally {
       setLoadingSellerOrders(false);
     }
-  }, []);
+  }, [attachCustomerNamesToOrders]);
 
   const handleOpenSellerOrders = async (seller) => {
     setSelectedSeller(seller);
@@ -668,7 +748,11 @@ export default function Perfil() {
                     {order?.sap_docnum ? `Pedido SAP #${order.sap_docnum}` : `Pedido ${order?.id?.slice(0, 8) || ''}`}
                   </Text>
                   <Text style={styles.orderMeta}>
-                    Cliente: {order?.card_code || 'N/A'} | Entrega: {order?.doc_due_date || 'N/A'}
+                    Cliente:{' '}
+                    {order?.customer_name
+                      ? `${order.customer_name} (${order?.card_code || 'N/A'})`
+                      : order?.card_code || 'N/A'}{' '}
+                    | Entrega: {order?.doc_due_date || 'N/A'}
                   </Text>
                   <Text style={styles.orderDate}>{formatDateTime(order?.created_at)}</Text>
                 </View>
@@ -1005,7 +1089,12 @@ export default function Perfil() {
                           <Text style={styles.sellerOrderTitle}>
                             {item?.sap_docnum ? `SAP #${item.sap_docnum}` : `Pedido ${item?.id?.slice(0, 8) || ''}`}
                           </Text>
-                          <Text style={styles.sellerOrderMeta}>Cliente: {item?.card_code || 'N/A'}</Text>
+                          <Text style={styles.sellerOrderMeta}>
+                            Cliente:{' '}
+                            {item?.customer_name
+                              ? `${item.customer_name} (${item?.card_code || 'N/A'})`
+                              : item?.card_code || 'N/A'}
+                          </Text>
                           <Text style={styles.sellerOrderMeta}>{formatDateTime(item?.created_at)}</Text>
                         </View>
                         <View style={[styles.statusPill, { backgroundColor: `${statusInfo.color}22` }]}>

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, FlatList, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
@@ -13,7 +13,16 @@ import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/d
 import { Swipeable } from 'react-native-gesture-handler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { clearLocalSupabaseSession, supabase } from '../../src/services/supabaseClient';
-import { enqueuePendingOrder, flushPendingOrders } from '../../src/services/offlineService';
+import {
+  classifyOrderError,
+  enqueuePendingOrder,
+  flushPendingOrders,
+  getOrderErrorMessage,
+  markPendingOrderError,
+  removePendingOrder,
+  shouldKeepOrderInQueue,
+  submitSalesOrderRpc
+} from '../../src/services/offlineService';
 import { useCart } from '../../src/context/CartContext';
 import { COLORS, GLOBAL_STYLES } from '../../src/constants/theme';
 
@@ -27,6 +36,12 @@ const SWIPE_HINT_SEEN_KEY = 'pedido:swipe-hint-seen:v1';
 const PRODUCT_FALLBACK_IMAGE =
   'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=300&q=80';
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const buildClientOrderId = () => {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return `ord-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+};
 const formatDateToISO = (date) => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -72,6 +87,7 @@ export default function Pedido() {
   const [checkoutModalVisible, setCheckoutModalVisible] = useState(false);
   const [deliveryDate, setDeliveryDate] = useState('');
   const [selectedWarehouse, setSelectedWarehouse] = useState('100');
+  const [orderComments, setOrderComments] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [submittingOrder, setSubmittingOrder] = useState(false);
   const [sharingPdf, setSharingPdf] = useState(false);
@@ -86,10 +102,10 @@ export default function Pedido() {
   const hasMixedClients = cartCardCodes.length > 1;
   const orderCustomerCode = cartCardCodes[0] || '';
   const orderCustomerName = String(cart?.[0]?.CustomerName || cart?.[0]?.CardName || '').trim();
-  const openSessionExpiredAlert = () => {
+  const openSessionExpiredAlert = (message = 'Tu sesion expiro. Debes iniciar sesion nuevamente.') => {
     setCheckoutModalVisible(false);
     setShowDatePicker(false);
-    Alert.alert('Sesion expirada', 'Tu sesion expiro. Debes iniciar sesion nuevamente.', [
+    Alert.alert('Sesion expirada', message, [
       {
         text: 'OK',
         onPress: async () => {
@@ -325,23 +341,9 @@ export default function Pedido() {
     }
 
     const sendOrder = async () => {
-      let queuedPayload = null;
+      let queuedItem = null;
       try {
         setSubmittingOrder(true);
-        const {
-          data: { user },
-          error: userError
-        } = await supabase.auth.getUser();
-
-        if (userError) {
-          openSessionExpiredAlert();
-          return;
-        }
-        if (!user?.id) {
-          openSessionExpiredAlert();
-          return;
-        }
-
         let resolvedZona = String(firstItem.Zona || firstItem.zona || '').trim();
         let resolvedIdRuta = String(firstItem.IdRuta || firstItem.IDRuta || firstItem.idRuta || '').trim();
 
@@ -367,18 +369,30 @@ export default function Pedido() {
         }
 
         const rpcPayload = {
+          p_client_order_id: buildClientOrderId(),
           p_card_code: safeCardCode,
           p_doc_due_date: safeDate,
           p_zona: resolvedZona,
           p_id_ruta: resolvedIdRuta,
-          p_lines: linesPayload
+          p_lines: linesPayload,
+          p_comments: String(orderComments || '').trim() || null
         };
-        queuedPayload = rpcPayload;
-        const { data: orderId, error } = await supabase.rpc('create_sales_order', {
-          ...rpcPayload
+        queuedItem = await enqueuePendingOrder({
+          rpcPayload,
+          cardCode: safeCardCode,
+          customerName: firstItem.CustomerName || firstItem.CardName || ''
         });
 
-        if (error) throw error;
+        const {
+          data: { user },
+          error: userError
+        } = await supabase.auth.getUser();
+
+        if (userError || !user?.id) {
+          throw userError || { message: 'Usuario no autenticado', status: 401 };
+        }
+
+        const orderId = await submitSalesOrderRpc(rpcPayload);
 
         let sapDocNum = null;
         if (orderId) {
@@ -403,11 +417,15 @@ export default function Pedido() {
             }
           }
         }
+        if (queuedItem?.id) {
+          await removePendingOrder(queuedItem.id);
+        }
 
         setCheckoutModalVisible(false);
         setShowDatePicker(false);
         setDeliveryDate('');
         setSelectedWarehouse('100');
+        setOrderComments('');
         clearCart();
         const successMessage = sapDocNum
           ? `Pedido ${sapDocNum} guardado exitosamente. Puedes validar todos tus pedidos desde tu perfil.`
@@ -422,52 +440,36 @@ export default function Pedido() {
         ]);
       } catch (error) {
         console.error('create_sales_order rpc failed', error);
-        const rawErrorText = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
-        const isNetworkError =
-          rawErrorText.includes('network request failed') ||
-          rawErrorText.includes('failed to fetch') ||
-          rawErrorText.includes('timeout') ||
-          rawErrorText.includes('offline') ||
-          rawErrorText.includes('network');
-        const isSessionExpired =
-          rawErrorText.includes('auth session missing') ||
-          rawErrorText.includes('usuario no autenticado') ||
-          rawErrorText.includes('jwt') ||
-          rawErrorText.includes('not authenticated') ||
-          error?.status === 401 ||
-          error?.code === 'PGRST301';
+        const errorCode = classifyOrderError(error);
+        const userMessage = getOrderErrorMessage(error);
+        const shouldKeepQueued = shouldKeepOrderInQueue(errorCode);
 
-        if (isSessionExpired) {
-          openSessionExpiredAlert();
+        if (queuedItem?.id) {
+          if (shouldKeepQueued) {
+            await markPendingOrderError(queuedItem.id, error);
+          } else {
+            await removePendingOrder(queuedItem.id);
+          }
+        }
+
+        if (errorCode === 'session_expired') {
+          openSessionExpiredAlert(`${userMessage} Tu pedido quedo guardado localmente y se enviara cuando vuelvas a iniciar sesion.`);
           return;
         }
 
-        if (isNetworkError && queuedPayload) {
-          await enqueuePendingOrder({
-            rpcPayload: queuedPayload,
-            cardCode: safeCardCode,
-            customerName: firstItem.CustomerName || firstItem.CardName || ''
-          });
+        if (shouldKeepQueued) {
           setCheckoutModalVisible(false);
           setShowDatePicker(false);
           setDeliveryDate('');
           setSelectedWarehouse('100');
+          setOrderComments('');
           clearCart();
-          Alert.alert('Sin conexion', 'Tu pedido se guardo en cola y se enviara automaticamente cuando vuelva la conexion.');
+          Alert.alert('Pedido pendiente', `${userMessage} Puedes validar su estado desde tu perfil.`);
           router.replace('/(tabs)/clientes');
           return;
         }
 
-        const detailParts = [
-          error?.message,
-          error?.details,
-          error?.hint,
-          error?.code ? `Code: ${error.code}` : ''
-        ]
-          .map((part) => String(part || '').trim())
-          .filter(Boolean);
-        const message = detailParts.join('\n') || 'No se pudo crear el pedido.';
-        Alert.alert('Error al enviar', message);
+        Alert.alert('Error al enviar', userMessage);
       } finally {
         setSubmittingOrder(false);
       }
@@ -587,7 +589,7 @@ export default function Pedido() {
     );
   };
 
-  const handleShareCartPdf = async () => {
+  const handleShareCartPdf = useCallback(async () => {
     if (cart.length === 0) {
       Alert.alert('Carrito vacio', 'No hay productos para compartir.');
       return;
@@ -685,7 +687,7 @@ export default function Pedido() {
     } finally {
       setSharingPdf(false);
     }
-  };
+  }, [cart, orderCustomerCode, orderCustomerName, getTotal]);
   const screenOptions = useMemo(
     () => ({
       title: 'Resumen de Pedido',
@@ -832,6 +834,17 @@ export default function Pedido() {
                 );
               })}
             </View>
+            <Text style={styles.checkoutLabel}>Comentarios (opcional)</Text>
+            <TextInput
+              value={orderComments}
+              onChangeText={setOrderComments}
+              placeholder="Escribe aqui observaciones del pedido..."
+              multiline
+              numberOfLines={3}
+              maxLength={250}
+              style={styles.checkoutCommentsInput}
+            />
+            <Text style={styles.checkoutCommentCounter}>{`${String(orderComments || '').length}/250`}</Text>
 
             <View style={styles.checkoutActions}>
               <Button
@@ -1006,6 +1019,25 @@ const styles = StyleSheet.create({
   checkoutDateValue: { fontSize: 15, fontWeight: '700', color: COLORS.text },
   checkoutDatePlaceholder: { fontSize: 15, color: COLORS.textLight },
   checkoutDateHint: { fontSize: 12, color: COLORS.textLight, marginTop: 6 },
+  checkoutCommentsInput: {
+    marginTop: 2,
+    minHeight: 86,
+    borderWidth: 1,
+    borderColor: '#D6DFEA',
+    borderRadius: 10,
+    backgroundColor: '#FFF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    textAlignVertical: 'top',
+    fontSize: 14,
+    color: COLORS.text
+  },
+  checkoutCommentCounter: {
+    marginTop: 4,
+    fontSize: 11,
+    color: COLORS.textLight,
+    textAlign: 'right'
+  },
   warehouseList: { gap: 8, marginTop: 4 },
   warehouseOption: {
     borderWidth: 1,
