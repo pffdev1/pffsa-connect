@@ -93,7 +93,7 @@ export default function CustomerGrid({
 }
 
 const styles = StyleSheet.create({
-  listContent: { paddingBottom: 100, paddingTop: 10 },
+  listContent: { paddingBottom: 24, paddingTop: 10 },
   colWrap: { marginBottom: 0 },
   footerSkeletonWrap: { paddingTop: 4, paddingBottom: 8 },
   footerText: { color: COLORS.textLight, marginTop: 6, textAlign: 'center' },

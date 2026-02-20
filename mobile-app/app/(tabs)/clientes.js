@@ -581,6 +581,10 @@ export default function Clientes() {
     detailsSheetRef.current?.dismiss();
   }, []);
 
+  const handleOpenProfile = useCallback(() => {
+    router.push('/perfil');
+  }, [router]);
+
   const handleOpenCatalog = useCallback((item) => {
     if (isClientBlocked(item)) {
       Alert.alert('Cliente bloqueado', 'No puedes crear pedidos para este cliente mientras este bloqueado.');
@@ -602,7 +606,7 @@ export default function Clientes() {
   const hasValidBalance = Number.isFinite(balanceValue);
 
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['left', 'right']}>
       <Stack.Screen options={clientesScreenOptions} />
 
       <View style={styles.searchContainer}>
@@ -663,8 +667,16 @@ export default function Clientes() {
                 </Badge>
               )}
             </View>
-            <Button mode="text" compact textColor="#EAF4FF" onPress={() => router.push('/perfil')}>
-              Perfil
+            <Button
+              mode="contained-tonal"
+              compact
+              onPress={handleOpenProfile}
+              buttonColor="rgba(255,255,255,0.18)"
+              textColor="#FFF"
+              style={styles.profileBtn}
+              labelStyle={styles.profileBtnLabel}
+            >
+              Mi perfil
             </Button>
           </View>
         )}
@@ -883,6 +895,16 @@ const styles = StyleSheet.create({
   bellWrap: {
     position: 'relative',
     marginRight: 2
+  },
+  profileBtn: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.28)'
+  },
+  profileBtnLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.2
   },
   bellBadge: {
     position: 'absolute',
