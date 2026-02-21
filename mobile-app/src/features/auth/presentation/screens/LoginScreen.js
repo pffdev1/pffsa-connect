@@ -6,22 +6,16 @@ import { Button, HelperText, TextInput } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { clearLocalSupabaseSession, supabase } from '../../../../shared/infrastructure/supabaseClient';
 import { COLORS } from '../../../../constants/theme';
+import { login, restoreSessionAccess } from '../../application/loginUseCase';
+import { sendRecoveryLink } from '../../application/sendRecoveryLinkUseCase';
 
 const PRIMARY_LOGO = require('../../../../../assets/logo.png');
 const FALLBACK_LOGO = require('../../../../../assets/mainlogo.png');
-const AUTH_GUARD_KEY = 'auth:login-guard:v1';
-const AUTH_WINDOW_MS = 5 * 60 * 1000;
-const AUTH_MAX_ATTEMPTS = 5;
-const AUTH_COOLDOWN_MS = 30 * 1000;
-const AUTH_TIMEOUT_MS = 12000;
-const ALLOWED_ROLES = new Set(['admin', 'vendedor']);
 const LOCAL_APP_VERSION = String(Constants?.expoConfig?.version || '0.0.0');
 
 const loginSchema = z.object({
@@ -36,199 +30,16 @@ const loginSchema = z.object({
   password: z.string().min(1, 'La contrasena es obligatoria.')
 });
 
-const timeoutError = () => {
-  const error = new Error('AUTH_TIMEOUT');
-  error.code = 'AUTH_TIMEOUT';
-  return error;
-};
-const withTimeout = (promise, ms = AUTH_TIMEOUT_MS) =>
-  Promise.race([
-    promise,
-    new Promise((_, reject) => {
-      setTimeout(() => reject(timeoutError()), ms);
-    })
-  ]);
-
-const isConnectionLikeError = (error) => {
-  const raw = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
-  return (
-    String(error?.code || '').trim().toUpperCase() === 'AUTH_TIMEOUT' ||
-    raw.includes('timeout') ||
-    raw.includes('timed out') ||
-    raw.includes('network request failed') ||
-    raw.includes('failed to fetch') ||
-    raw.includes('offline')
-  );
-};
-
-const normalizeVersion = (value) =>
-  String(value || '0.0.0')
-    .trim()
-    .split('.')
-    .slice(0, 3)
-    .map((part) => {
-      const n = Number.parseInt(part, 10);
-      return Number.isFinite(n) && n >= 0 ? n : 0;
-    });
-const compareVersion = (left, right) => {
-  const a = normalizeVersion(left);
-  const b = normalizeVersion(right);
-  for (let i = 0; i < 3; i += 1) {
-    if ((a[i] || 0) > (b[i] || 0)) return 1;
-    if ((a[i] || 0) < (b[i] || 0)) return -1;
-  }
-  return 0;
-};
-
-const readAuthGuard = async () => {
-  try {
-    const raw = await AsyncStorage.getItem(AUTH_GUARD_KEY);
-    if (!raw) return { attempts: [], lockUntilMs: 0 };
-    const parsed = JSON.parse(raw);
-    return {
-      attempts: Array.isArray(parsed?.attempts) ? parsed.attempts.filter((item) => Number.isFinite(item)) : [],
-      lockUntilMs: Number.isFinite(parsed?.lockUntilMs) ? parsed.lockUntilMs : 0
-    };
-  } catch (_error) {
-    return { attempts: [], lockUntilMs: 0 };
-  }
-};
-
-const writeAuthGuard = async (guard) => {
-  await AsyncStorage.setItem(AUTH_GUARD_KEY, JSON.stringify(guard));
-};
-
-const clearAuthGuard = async () => {
-  await AsyncStorage.removeItem(AUTH_GUARD_KEY);
-};
-
-const getCooldownRemainingMs = async () => {
-  const guard = await readAuthGuard();
-  const now = Date.now();
-  return guard.lockUntilMs > now ? guard.lockUntilMs - now : 0;
-};
-
-const registerFailedAttempt = async () => {
-  const now = Date.now();
-  const guard = await readAuthGuard();
-  const validAttempts = guard.attempts.filter((ts) => now - ts <= AUTH_WINDOW_MS);
-  validAttempts.push(now);
-  if (validAttempts.length >= AUTH_MAX_ATTEMPTS) {
-    const nextGuard = { attempts: [], lockUntilMs: now + AUTH_COOLDOWN_MS };
-    await writeAuthGuard(nextGuard);
-    return { locked: true, remaining: 0, lockUntilMs: nextGuard.lockUntilMs };
-  }
-  const nextGuard = { attempts: validAttempts, lockUntilMs: 0 };
-  await writeAuthGuard(nextGuard);
-  return { locked: false, remaining: Math.max(0, AUTH_MAX_ATTEMPTS - validAttempts.length), lockUntilMs: 0 };
-};
-
-const isMissingTableError = (error) => {
-  const raw = `${error?.message || ''}`.toLowerCase();
-  return String(error?.code || '').trim() === '42P01' || raw.includes('does not exist');
-};
-
-const logLoginEvent = async ({ type, email, userId, message }) => {
-  const payload = {
-    event_type: String(type || 'unknown'),
-    email: String(email || '').trim().toLowerCase(),
-    user_id: userId || null,
-    app_version: LOCAL_APP_VERSION,
-    platform: Platform.OS,
-    details: String(message || ''),
-    created_at: new Date().toISOString()
-  };
-
-  try {
-    const { error } = await supabase.from('auth_login_events').insert(payload);
-    if (error && !isMissingTableError(error)) {
-      // Silent: audit should not block login flow.
-    }
-  } catch (_error) {
-    // Silent: audit should not block login flow.
-  }
-};
-
-const checkVersionGate = async () => {
-  try {
-    const { data, error } = await supabase
-      .from('app_runtime_config')
-      .select('*')
-      .eq('enabled', true)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error) {
-      if (isMissingTableError(error)) return { blocked: false };
-      return { blocked: false };
-    }
-    if (!data) return { blocked: false };
-
-    const minVersion = String(data?.min_version || '').trim();
-    const forceUpdate = Boolean(data?.force_update);
-    if (forceUpdate && minVersion && compareVersion(LOCAL_APP_VERSION, minVersion) < 0) {
-      return {
-        blocked: true,
-        message: String(data?.message || `Debes actualizar la app a la version ${minVersion} para continuar.`)
-      };
-    }
-    return { blocked: false };
-  } catch (_error) {
-    return { blocked: false };
-  }
-};
-
-const resolveProfileAccess = (profileRow) => {
-  const role = String(profileRow?.role || '').trim().toLowerCase();
-  const statusRaw = String(profileRow?.status ?? '').trim().toLowerCase();
-  const activeRaw = profileRow?.active;
-  const isActiveByBoolean = typeof activeRaw === 'boolean' ? activeRaw : null;
-  const isActiveByStatus =
-    statusRaw === ''
-      ? null
-      : statusRaw === 'active' || statusRaw === 'enabled' || statusRaw === '1' || statusRaw === 'true';
-  const isActive = isActiveByBoolean ?? isActiveByStatus ?? true;
-  return { role, isActive };
-};
-
-const validateUserProfileAccess = async (userId) => {
-  const { data: profile, error } = await withTimeout(
-    supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .maybeSingle()
-  );
-  if (error) throw error;
-  if (!profile) {
-    const e = new Error('NO_PROFILE');
-    e.code = 'NO_PROFILE';
-    throw e;
-  }
-
-  const { role, isActive } = resolveProfileAccess(profile);
-  if (!isActive) {
-    const e = new Error('ACCOUNT_DISABLED');
-    e.code = 'ACCOUNT_DISABLED';
-    throw e;
-  }
-  if (!ALLOWED_ROLES.has(role)) {
-    const e = new Error('ROLE_NOT_ALLOWED');
-    e.code = 'ROLE_NOT_ALLOWED';
-    throw e;
-  }
-  return { role, profile };
-};
-
 export default function Login() {
   const router = useRouter();
   const { refresh } = useLocalSearchParams();
   const resetRedirectTo = useMemo(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin) {
-      return `${window.location.origin}/reset-password`;
-    }
-    return Linking.createURL('reset-password');
-  }, []);
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin) {
+    return `${window.location.origin}/reset-password`;
+  }
+
+  return Linking.createURL('reset-password', { scheme: 'pffsa-connect' });
+}, []);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sendingReset, setSendingReset] = useState(false);
@@ -251,25 +62,21 @@ export default function Login() {
     let mounted = true;
     const restoreSession = async () => {
       try {
-        const {
-          data: { session }
-        } = await withTimeout(supabase.auth.getSession());
-        if (!mounted || !session?.user?.id) return;
-
-        await validateUserProfileAccess(session.user.id);
-        const versionGate = await checkVersionGate();
-        if (versionGate.blocked) {
-          Alert.alert('Actualizacion requerida', versionGate.message);
+        const result = await restoreSessionAccess();
+        if (!mounted) return;
+        if (result.ok) {
+          router.replace('/(tabs)/home');
           return;
         }
-        router.replace('/(tabs)/home');
-      } catch (error) {
-        if (!mounted) return;
-        if (String(error?.code || '') === 'ACCOUNT_DISABLED' || String(error?.code || '') === 'ROLE_NOT_ALLOWED') {
-          await clearLocalSupabaseSession();
-          await supabase.auth.signOut();
+        if (result.code === 'VERSION_BLOCKED') {
+          Alert.alert('Actualizacion requerida', result.message);
+          return;
+        }
+        if (result.code === 'ACCOUNT_DISABLED' || result.code === 'ROLE_NOT_ALLOWED') {
           Alert.alert('Acceso restringido', 'Tu usuario no tiene acceso activo a esta aplicacion.');
         }
+      } catch (_error) {
+        // Silent: keep login form visible if restore flow fails.
       }
     };
 
@@ -280,111 +87,85 @@ export default function Login() {
   }, [router]);
 
   const handleLogin = handleSubmit(async ({ email, password }) => {
-    const normalizedEmail = email.trim().toLowerCase();
-    const cooldownMs = await getCooldownRemainingMs();
-    if (cooldownMs > 0) {
-      Alert.alert(
-        'Espera un momento',
-        `Por seguridad, intenta de nuevo en ${Math.ceil(cooldownMs / 1000)} segundos.`
-      );
-      return;
-    }
-
     try {
       setLoading(true);
-      const versionGate = await checkVersionGate();
-      if (versionGate.blocked) {
-        Alert.alert('Actualizacion requerida', versionGate.message);
-        return;
-      }
-
-      const { error } = await withTimeout(
-        supabase.auth.signInWithPassword({ email: normalizedEmail, password })
-      );
-      if (error) {
-        const failed = await registerFailedAttempt();
-        await logLoginEvent({
-          type: 'login_failed',
-          email: normalizedEmail,
-          message: error?.message || 'Credenciales invalidas'
-        });
-        if (failed.locked) {
+      const result = await login({ email, password });
+      if (!result.ok) {
+        if (result.code === 'COOLDOWN_ACTIVE') {
+          Alert.alert(
+            'Espera un momento',
+            `Por seguridad, intenta de nuevo en ${Math.ceil((result.cooldownMs || 0) / 1000)} segundos.`
+          );
+          return;
+        }
+        if (result.code === 'VERSION_BLOCKED') {
+          Alert.alert('Actualizacion requerida', result.message);
+          return;
+        }
+        if (result.code === 'LOCKED') {
           Alert.alert(
             'Demasiados intentos',
-            `Por seguridad, espera ${Math.ceil(AUTH_COOLDOWN_MS / 1000)} segundos para volver a intentar.`
+            `Por seguridad, espera ${Math.ceil((result.cooldownMs || 0) / 1000)} segundos para volver a intentar.`
           );
-        } else {
+          return;
+        }
+        if (result.code === 'INVALID_CREDENTIALS') {
           Alert.alert(
             'Credenciales invalidas',
-            `Verifica tu correo y contrasena. Intentos restantes: ${failed.remaining}.`
+            `Verifica tu correo y contrasena. Intentos restantes: ${result.remaining}.`
           );
+          return;
         }
+        if (result.code === 'CONNECTION_ERROR') {
+          Alert.alert('Sin conexion', 'No se pudo validar el acceso por red. Intenta nuevamente.');
+          return;
+        }
+        if (result.code === 'ACCOUNT_DISABLED') {
+          Alert.alert('Usuario desactivado', 'Tu cuenta esta desactivada. Contacta al administrador.');
+          return;
+        }
+        if (result.code === 'ROLE_NOT_ALLOWED') {
+          Alert.alert('Acceso restringido', 'Tu rol actual no tiene acceso a esta app.');
+          return;
+        }
+        if (result.code === 'NO_PROFILE') {
+          Alert.alert('Perfil incompleto', 'No existe perfil para este usuario. Contacta a IT.');
+          return;
+        }
+        Alert.alert('Error', 'No se pudo iniciar sesion. Intenta nuevamente.');
         return;
       }
-
-      const {
-        data: { user }
-      } = await withTimeout(supabase.auth.getUser());
-      if (!user?.id) {
-        throw new Error('No fue posible validar tu sesion.');
-      }
-
-      await validateUserProfileAccess(user.id);
-      await clearAuthGuard();
-      await logLoginEvent({
-        type: 'login_success',
-        email: normalizedEmail,
-        userId: user.id,
-        message: 'Acceso concedido'
-      });
       router.replace('/(tabs)/home');
-    } catch (error) {
-      if (isConnectionLikeError(error)) {
-        Alert.alert('Sin conexion', 'No se pudo validar el acceso por red. Intenta nuevamente.');
-      } else if (String(error?.code || '') === 'ACCOUNT_DISABLED') {
-        await supabase.auth.signOut();
-        Alert.alert('Usuario desactivado', 'Tu cuenta esta desactivada. Contacta al administrador.');
-      } else if (String(error?.code || '') === 'ROLE_NOT_ALLOWED') {
-        await supabase.auth.signOut();
-        Alert.alert('Acceso restringido', 'Tu rol actual no tiene acceso a esta app.');
-      } else if (String(error?.code || '') === 'NO_PROFILE') {
-        await supabase.auth.signOut();
-        Alert.alert('Perfil incompleto', 'No existe perfil para este usuario. Contacta a IT.');
-      } else {
-        Alert.alert('Error', 'No se pudo iniciar sesion. Intenta nuevamente.');
-      }
+    } catch (_error) {
+      Alert.alert('Error', 'No se pudo iniciar sesion. Intenta nuevamente.');
     } finally {
       setLoading(false);
     }
   });
 
   const handleForgotPassword = async () => {
-    const userEmail = getValues('email').trim().toLowerCase();
-    if (!userEmail) {
-      Alert.alert('Correo requerido', 'Ingresa tu correo para enviar el enlace de recuperacion.');
-      return;
-    }
-    if (!userEmail.endsWith('@pffsa.com')) {
-      Alert.alert('Dominio no permitido', 'Solo se permite recuperacion con correos @pffsa.com.');
-      return;
-    }
-
     try {
       setSendingReset(true);
-      const { error } = await withTimeout(
-        supabase.auth.resetPasswordForEmail(userEmail, { redirectTo: resetRedirectTo })
-      );
-      if (error) throw error;
-      Alert.alert(
-        'Enlace enviado',
-        'Te enviamos un enlace para restablecer tu contrasena.'
-      );
-    } catch (error) {
-      if (isConnectionLikeError(error)) {
-        Alert.alert('Sin conexion', 'No se pudo enviar el enlace por problemas de red.');
-      } else {
-        Alert.alert('Error', error?.message || 'No se pudo enviar el enlace de recuperacion.');
+      const result = await sendRecoveryLink(getValues('email'), resetRedirectTo);
+      if (!result.ok) {
+        if (result.code === 'EMAIL_REQUIRED') {
+          Alert.alert('Correo requerido', 'Ingresa tu correo para enviar el enlace de recuperacion.');
+          return;
+        }
+        if (result.code === 'INVALID_DOMAIN') {
+          Alert.alert('Dominio no permitido', 'Solo se permite recuperacion con correos @pffsa.com.');
+          return;
+        }
+        if (result.code === 'CONNECTION_ERROR') {
+          Alert.alert('Sin conexion', 'No se pudo enviar el enlace por problemas de red.');
+          return;
+        }
+        Alert.alert('Error', result.message || 'No se pudo enviar el enlace de recuperacion.');
+        return;
       }
+      Alert.alert('Enlace enviado', 'Te enviamos un enlace para restablecer tu contrasena.');
+    } catch (_error) {
+      Alert.alert('Error', 'No se pudo enviar el enlace de recuperacion.');
     } finally {
       setSendingReset(false);
     }

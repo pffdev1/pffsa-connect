@@ -17,13 +17,14 @@ const authConfig = isWeb
   ? {
       autoRefreshToken: true,
       persistSession: isBrowser,
-      detectSessionInUrl: false
+      detectSessionInUrl: false,
     }
   : {
       storage: AsyncStorage,
       autoRefreshToken: true,
       persistSession: true,
-      detectSessionInUrl: false
+      detectSessionInUrl: false,
+      flowType: 'pkce',
     };
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {

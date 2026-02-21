@@ -108,13 +108,15 @@ export default function Perfil() {
     resolver: zodResolver(passwordSchema),
     defaultValues: { newPassword: '', confirmPassword: '' }
   });
-
   const resetRedirectTo = useMemo(() => {
-    if (typeof window !== 'undefined' && window.location?.origin) {
-      return `${window.location.origin}/reset-password`;
-    }
-    return Linking.createURL('reset-password');
-  }, []);
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return `${window.location.origin}/reset-password`;
+  }
+
+  return Linking.createURL('reset-password', {
+    scheme: 'pffsa-connect'
+  });
+}, []);
   const perfilScreenOptions = useMemo(() => ({ headerShown: false }), []);
 
   useEffect(() => {
