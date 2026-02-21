@@ -19,9 +19,32 @@ const MAX_UNLOCK_NOTIFICATIONS = 30;
 const MIN_SKELETON_MS = 700;
 const SEARCH_DEBOUNCE_MS = 280;
 const NOTIFICATION_DEDUPE_WINDOW_MS = 2 * 60 * 1000;
+const QUERY_TIMEOUT_MS = 12000;
 const CUSTOMER_SELECT_FIELDS =
   'CardCode, CardName, CardFName, RUC, DV, Vendedor, Nivel, SubCategoria, TipoCadena, Ruta, Zona, IDRuta, Direccion, DiasEntrega, Horario, Balance, Bloqueado';
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const buildTimeoutError = () => {
+  const timeoutError = new Error('Customers query timeout');
+  timeoutError.code = 'REQUEST_TIMEOUT';
+  timeoutError.status = 408;
+  return timeoutError;
+};
+const withTimeout = (promise, timeoutMs = QUERY_TIMEOUT_MS) =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(buildTimeoutError()), timeoutMs))
+  ]);
+const isConnectionLikeError = (error) => {
+  const raw = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+  return (
+    String(error?.code || '').trim().toUpperCase() === 'REQUEST_TIMEOUT' ||
+    raw.includes('timeout') ||
+    raw.includes('timed out') ||
+    raw.includes('network request failed') ||
+    raw.includes('failed to fetch') ||
+    raw.includes('offline')
+  );
+};
 const sanitizeSearchTerm = (value = '') =>
   value
     .trim()
@@ -174,17 +197,15 @@ export default function Clientes() {
         const {
           data: { user },
           error: userError
-        } = await supabase.auth.getUser();
+        } = await withTimeout(supabase.auth.getUser());
 
         if (userError) throw userError;
         if (!user?.id) throw new Error('No hay sesion activa');
         bootstrapUserId = user.id;
 
-        const { data: p, error: profileError } = await supabase
-          .from('profiles')
-          .select('full_name, role')
-          .eq('id', user.id)
-          .maybeSingle();
+        const { data: p, error: profileError } = await withTimeout(
+          supabase.from('profiles').select('full_name, role').eq('id', user.id).maybeSingle()
+        );
 
         if (profileError && profileError.code !== 'PGRST116') throw profileError;
 
@@ -209,7 +230,7 @@ export default function Clientes() {
           .order('Nivel', { ascending: true })
           .range(0, PAGE_SIZE - 1);
 
-        const { data, error } = await query;
+        const { data, error } = await withTimeout(query);
         if (error) throw error;
 
         const elapsed = Date.now() - startedAt;
@@ -449,7 +470,7 @@ export default function Clientes() {
     return () => clearInterval(intervalId);
   }, [profile, realtimeStatus, isFocused, pushUnlockNotification]);
 
-  const fetchClientes = useCallback(async (reset = false, currentProfile = profile, searchTerm = debouncedSearch) => {
+  const fetchClientes = useCallback(async (reset = false, currentProfile = profile, searchTerm = debouncedSearch, showConnectionAlert = false) => {
     const startedAt = Date.now();
 
     try {
@@ -485,7 +506,7 @@ export default function Clientes() {
         );
       }
 
-      const { data, error } = await query;
+      const { data, error } = await withTimeout(query);
       if (error) throw error;
       if (!isMounted.current) return;
 
@@ -504,9 +525,33 @@ export default function Clientes() {
     } catch (error) {
       console.error('Error cargando clientes:', error.message);
       if (!isMounted.current) return;
-      setErrorMsg(
-        reset ? 'No se pudo cargar la lista de clientes. Intenta nuevamente.' : 'No se pudieron cargar mas clientes.'
-      );
+      const connectionError = isConnectionLikeError(error);
+      const hasExistingRows = Array.isArray(clientesRef.current) && clientesRef.current.length > 0;
+
+      if (reset && connectionError) {
+        if (!hasExistingRows) {
+          const userId = String(authUserId || '').trim();
+          const roleKey = String(currentProfile?.role || 'vendedor').trim();
+          const cacheKey = userId ? `offline:clientes:first_page:${userId}:${roleKey}` : null;
+          const cached = cacheKey ? await getCachedJson(cacheKey, null) : null;
+          if (Array.isArray(cached) && cached.length > 0) {
+            setClientes(cached);
+            setHasMore(false);
+          }
+        }
+
+        setErrorMsg('Problemas de conexion: mostrando la ultima informacion cargada. Intenta nuevamente mas tarde.');
+        if (showConnectionAlert) {
+          Alert.alert(
+            'Problemas de conexion',
+            'No pudimos actualizar los clientes. Se mostrara la ultima informacion cargada. Intenta nuevamente mas tarde.'
+          );
+        }
+      } else {
+        setErrorMsg(
+          reset ? 'No se pudo cargar la lista de clientes. Intenta nuevamente.' : 'No se pudieron cargar mas clientes.'
+        );
+      }
     } finally {
       if (!isMounted.current) return;
       if (reset) {
@@ -516,7 +561,7 @@ export default function Clientes() {
         setLoadingMore(false);
       }
     }
-  }, [clientes, debouncedSearch, hasMore, loadingMore, profile]);
+  }, [authUserId, clientes?.length, debouncedSearch, hasMore, loadingMore, profile]);
 
   useEffect(() => {
     clientesRef.current = Array.isArray(clientes) ? clientes : [];
@@ -552,7 +597,7 @@ export default function Clientes() {
     try {
       setRefreshing(true);
       setHasMore(true);
-      await fetchClientes(true, profile, debouncedSearch);
+      await fetchClientes(true, profile, debouncedSearch, true);
     } finally {
       setRefreshing(false);
     }

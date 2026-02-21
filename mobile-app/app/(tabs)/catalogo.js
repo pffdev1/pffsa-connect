@@ -13,14 +13,37 @@ import { useCart } from '../../src/context/CartContext';
 import ProductGrid from '../../src/components/ProductGrid';
 
 const MIN_SKELETON_MS = 650;
-const PAGE_SIZE = 80;
+const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 260;
+const QUERY_TIMEOUT_MS = 12000;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sanitizeSearchTerm = (value = '') =>
   value
     .trim()
     .replace(/[%_,]/g, ' ')
     .replace(/\s+/g, ' ');
+const buildTimeoutError = () => {
+  const timeoutError = new Error('Catalog query timeout');
+  timeoutError.code = 'REQUEST_TIMEOUT';
+  timeoutError.status = 408;
+  return timeoutError;
+};
+const withTimeout = (promise, timeoutMs = QUERY_TIMEOUT_MS) =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(buildTimeoutError()), timeoutMs))
+  ]);
+const isConnectionLikeError = (error) => {
+  const raw = `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+  return (
+    String(error?.code || '').trim().toUpperCase() === 'REQUEST_TIMEOUT' ||
+    raw.includes('timeout') ||
+    raw.includes('timed out') ||
+    raw.includes('network request failed') ||
+    raw.includes('failed to fetch') ||
+    raw.includes('offline')
+  );
+};
 // PriceSource priority: card-specific offer > list-level offer > base price.
 const PRICE_SOURCE_PRIORITY = {
   CARDCODE_OFFER: 3,
@@ -112,7 +135,7 @@ export default function Catalogo() {
   }, [isFocused]);
 
   const fetchProductos = useCallback(
-    async ({ reset = false, searchTerm = debouncedSearch } = {}) => {
+    async ({ reset = false, searchTerm = debouncedSearch, showConnectionAlert = false } = {}) => {
       if (!safeCardCode || (!reset && (!hasMore || loadingMore))) return;
 
       const startedAt = Date.now();
@@ -150,7 +173,7 @@ export default function Catalogo() {
 
         query = query.order('ItemCode', { ascending: true }).range(from, to);
 
-        let { data, error } = await query;
+        let { data, error } = await withTimeout(query);
         if (error && String(error.message || '').toLowerCase().includes('pricesource')) {
           query = supabase
             .from('vw_catalogo_cliente')
@@ -171,7 +194,7 @@ export default function Catalogo() {
             query = query.or(`ItemName.ilike.${likeTerm},ItemCode.ilike.${likeTerm},Marca.ilike.${likeTerm}`);
           }
           query = query.order('ItemCode', { ascending: true }).range(from, to);
-          ({ data, error } = await query);
+          ({ data, error } = await withTimeout(query));
         }
 
         if (error) throw error;
@@ -196,8 +219,20 @@ export default function Catalogo() {
           if (Array.isArray(cached) && cached.length > 0) {
             setItems(cached);
             setHasMore(false);
+            if (showConnectionAlert && isConnectionLikeError(error)) {
+              Alert.alert(
+                'Problemas de conexion',
+                'No pudimos actualizar el catalogo. Se mostrara la ultima informacion cargada. Intenta nuevamente mas tarde.'
+              );
+            }
           } else {
             setItems([]);
+            if (showConnectionAlert && isConnectionLikeError(error)) {
+              Alert.alert(
+                'Problemas de conexion',
+                'No pudimos actualizar el catalogo y no hay datos en cache. Intenta nuevamente mas tarde.'
+              );
+            }
           }
         }
       } finally {
@@ -288,7 +323,7 @@ export default function Catalogo() {
       setRefreshing(true);
       setNextFrom(0);
       setHasMore(true);
-      await fetchProductos({ reset: true, searchTerm: debouncedSearch });
+      await fetchProductos({ reset: true, searchTerm: debouncedSearch, showConnectionAlert: true });
     } finally {
       setRefreshing(false);
     }
