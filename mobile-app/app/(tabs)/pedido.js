@@ -279,7 +279,33 @@ export default function Pedido() {
           return;
         }
       }
-    } catch (_error) {
+    } catch (error) {
+      const errorCode = classifyOrderError(error);
+      if (errorCode === 'session_expired') {
+        openSessionExpiredAlert('Tu sesion expiro. Debes iniciar sesion nuevamente.');
+        return;
+      }
+
+      if (errorCode === 'network' || errorCode === 'timeout' || errorCode === 'server') {
+        Alert.alert(
+          'Validacion no disponible',
+          'No se pudo validar el estado del cliente por conexion. Puedes continuar y el pedido se enviara cuando haya internet.',
+          [
+            { text: 'Cancelar', style: 'cancel' },
+            {
+              text: 'Continuar',
+              onPress: () => {
+                if (!deliveryDate) {
+                  setDeliveryDate(formatDateToISO(getToday()));
+                }
+                setCheckoutModalVisible(true);
+              }
+            }
+          ]
+        );
+        return;
+      }
+
       Alert.alert('Error', 'No se pudo validar el estado del cliente. Intenta nuevamente.');
       return;
     }
