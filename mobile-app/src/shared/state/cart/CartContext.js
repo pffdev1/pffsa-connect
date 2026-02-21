@@ -1,6 +1,6 @@
 import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { clearLocalSupabaseSession, isInvalidRefreshTokenError, supabase } from '../services/supabaseClient';
+import { clearLocalSupabaseSession, isInvalidRefreshTokenError, supabase } from '../../infrastructure/supabaseClient';
 
 const CartContext = createContext();
 const roundQty = (value) => Math.round(value * 1000) / 1000;

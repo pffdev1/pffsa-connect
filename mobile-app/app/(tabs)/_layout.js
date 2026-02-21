@@ -2,8 +2,8 @@ import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Platform, View, Text, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { COLORS } from '../../src/constants/theme';
-import { useCart } from '../../src/context/CartContext';
+import { APP_LAYOUT, COLORS } from '../../src/constants/theme';
+import { useCart } from '../../src/shared/state/cart/CartContext';
 
 function CartTabIcon({ color, count }) {
   return (
@@ -28,8 +28,9 @@ export default function TabLayout() {
     <Tabs screenOptions={{
       tabBarActiveTintColor: COLORS.primary,
       tabBarInactiveTintColor: 'gray',
-      headerStyle: { backgroundColor: COLORS.primary },
-      headerTintColor: '#FFF',
+      headerStyle: { backgroundColor: COLORS.background, height: APP_LAYOUT.HEADER_HEIGHT },
+      headerTintColor: COLORS.primary,
+      headerShadowVisible: false,
       tabBarHideOnKeyboard: true,
       sceneStyle: { backgroundColor: COLORS.background },
       tabBarStyle: {
@@ -41,6 +42,14 @@ export default function TabLayout() {
         paddingTop: 6
       }
     }}>
+      <Tabs.Screen
+        name="home"
+        options={{
+          title: 'Inicio',
+          tabBarLabel: 'Inicio',
+          tabBarIcon: ({ color }) => <Ionicons name="home-outline" size={26} color={color} />,
+        }}
+      />
       <Tabs.Screen
         name="clientes"
         options={{

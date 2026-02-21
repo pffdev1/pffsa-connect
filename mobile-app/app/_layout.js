@@ -3,32 +3,20 @@ import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { PaperProvider } from 'react-native-paper';
-import { CartProvider } from '../src/context/CartContext';
+import { CartProvider } from '../src/shared/state/cart/CartContext';
 import { COLORS, PAPER_THEME } from '../src/constants/theme';
-import { supabase } from '../src/services/supabaseClient';
+import { supabase } from '../src/shared/infrastructure/supabaseClient';
 import {
   bindNotificationListeners,
   configureNotificationsAsync,
   registerPushTokenForCurrentUserAsync
-} from '../src/services/notificationsService';
-import { flushPendingOrders } from '../src/services/offlineService';
+} from '../src/shared/infrastructure/notificationsService';
+import { flushPendingOrders } from '../src/shared/infrastructure/offlineService';
 
 export default function RootLayout() {
   useEffect(() => {
     let active = true;
-
-    const setup = async () => {
-      try {
-        await configureNotificationsAsync();
-        if (!active) return;
-        await registerPushTokenForCurrentUserAsync();
-        await flushPendingOrders();
-      } catch (_error) {
-        // Silent setup failure; app must continue without blocking navigation.
-      }
-    };
-
-    setup();
+    configureNotificationsAsync().catch(() => {});
 
     const removeNotificationListeners = bindNotificationListeners();
     const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
@@ -40,6 +28,13 @@ export default function RootLayout() {
         // Ignore token sync failures.
       }
     });
+
+    // Cold start: sync only when there is an existing session.
+    supabase.auth.getSession().then(({ data }) => {
+      if (!active || !data?.session?.user) return;
+      registerPushTokenForCurrentUserAsync().catch(() => {});
+      flushPendingOrders().catch(() => {});
+    }).catch(() => {});
 
     return () => {
       active = false;

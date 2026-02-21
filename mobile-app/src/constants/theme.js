@@ -27,6 +27,11 @@ export const PAPER_THEME = {
 };
 
 export const GLOBAL_STYLES = {
+  contentMax: {
+    width: '100%',
+    maxWidth: 820,
+    alignSelf: 'center'
+  },
   shadow: {
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -34,4 +39,10 @@ export const GLOBAL_STYLES = {
     shadowRadius: 4,
     elevation: 3
   }
+};
+
+export const APP_LAYOUT = {
+  HEADER_HEIGHT: 56,
+  SCREEN_PADDING: 16,
+  SECTION_GAP: 18
 };

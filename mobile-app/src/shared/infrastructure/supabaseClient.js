@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Expo detecta automaticamente las variables que empiezan con EXPO_PUBLIC_
+// Expo detects env vars prefixed with EXPO_PUBLIC_.
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 

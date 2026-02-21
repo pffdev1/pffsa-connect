@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
 import { FlatList, Text, useWindowDimensions, View, StyleSheet } from 'react-native';
 import CustomerCard from './CustomerCard';
-import { COLORS } from '../constants/theme';
+import { COLORS } from '../../../../constants/theme';
 
 const getNumColumns = (width) => {
   if (width >= 1280) return 4;

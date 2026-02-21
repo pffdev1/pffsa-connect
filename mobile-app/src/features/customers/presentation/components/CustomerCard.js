@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Skeleton } from 'moti/skeleton';
-import { COLORS, GLOBAL_STYLES } from '../constants/theme';
+import { COLORS, GLOBAL_STYLES } from '../../../../constants/theme';
 
 const resolveName = (item) => item?.full_name || item?.CardFName || item?.CardName || 'Cliente sin nombre';
 const resolveSubCategoria = (item) => item?.SubCategoria || 'No definida';
