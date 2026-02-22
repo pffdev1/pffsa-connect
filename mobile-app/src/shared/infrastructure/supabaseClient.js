@@ -17,7 +17,7 @@ const authConfig = isWeb
   ? {
       autoRefreshToken: true,
       persistSession: isBrowser,
-      detectSessionInUrl: false,
+      detectSessionInUrl: true,
     }
   : {
       storage: AsyncStorage,

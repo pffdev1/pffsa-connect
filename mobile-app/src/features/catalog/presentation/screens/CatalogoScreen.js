@@ -6,6 +6,7 @@ import { useIsFocused } from '@react-navigation/native';
 import { Badge, Button, Searchbar } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../../../shared/infrastructure/supabaseClient';
 import { getCachedJson, setCachedJson } from '../../../../shared/infrastructure/offlineService';
 import { APP_LAYOUT, COLORS, GLOBAL_STYLES } from '../../../../constants/theme';
@@ -16,6 +17,7 @@ const MIN_SKELETON_MS = 650;
 const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 260;
 const QUERY_TIMEOUT_MS = 12000;
+const CATALOG_RESET_ON_FOCUS_KEY = 'catalog:reset-client-on-focus:v1';
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sanitizeSearchTerm = (value = '') =>
   value
@@ -133,6 +135,39 @@ export default function Catalogo() {
     setItems((prev) => (Array.isArray(prev) ? [...prev] : prev));
     setGridEpoch((prev) => prev + 1);
   }, [isFocused]);
+
+  useEffect(() => {
+    if (!isFocused) return;
+    let cancelled = false;
+
+    const applyPendingCatalogReset = async () => {
+      try {
+        const shouldReset = await AsyncStorage.getItem(CATALOG_RESET_ON_FOCUS_KEY);
+        if (cancelled || shouldReset !== '1') return;
+        await AsyncStorage.removeItem(CATALOG_RESET_ON_FOCUS_KEY);
+        if (cancelled) return;
+
+        router.setParams({
+          cardCode: '',
+          cardName: '',
+          zona: '',
+          idRuta: ''
+        });
+        setSearch('');
+        setDebouncedSearch('');
+        setItems(null);
+        setNextFrom(0);
+        setHasMore(true);
+      } catch (_error) {
+        // Ignore storage errors; fallback is keeping current route params.
+      }
+    };
+
+    applyPendingCatalogReset();
+    return () => {
+      cancelled = true;
+    };
+  }, [isFocused, router]);
 
   const fetchProductos = useCallback(
     async ({ reset = false, searchTerm = debouncedSearch, showConnectionAlert = false } = {}) => {

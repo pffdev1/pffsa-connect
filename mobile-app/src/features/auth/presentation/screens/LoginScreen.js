@@ -34,8 +34,9 @@ export default function Login() {
   const router = useRouter();
   const { refresh } = useLocalSearchParams();
   const resetRedirectTo = useMemo(() => {
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin) {
-    return `${window.location.origin}/reset-password`;
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.href) {
+    const baseUrl = new URL('.', window.location.href);
+    return new URL('reset-password', baseUrl).toString();
   }
 
   return Linking.createURL('reset-password', { scheme: 'pffsa-connect' });

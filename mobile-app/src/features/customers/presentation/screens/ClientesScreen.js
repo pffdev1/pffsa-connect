@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { BottomSheetModal, BottomSheetView } from '@gorhom/bottom-sheet';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Avatar, Button, Chip, Searchbar, Surface } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -31,6 +33,7 @@ import {
 const PAGE_SIZE = 50;
 const MIN_SKELETON_MS = 700;
 const SEARCH_DEBOUNCE_MS = 280;
+const CATALOG_RESET_ON_FOCUS_KEY = 'catalog:reset-client-on-focus:v1';
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default function Clientes() {
@@ -88,7 +91,21 @@ export default function Clientes() {
     if (handledOrderCompletedRef.current === completedToken) return;
     handledOrderCompletedRef.current = completedToken;
     clearCartRef.current?.();
+    AsyncStorage.setItem(CATALOG_RESET_ON_FOCUS_KEY, '1').catch(() => {});
+    detailsSheetRef.current?.dismiss();
+    setSelectedClient(null);
+    setSearch('');
+    setDebouncedSearch('');
   }, [orderCompleted]);
+
+  useFocusEffect(
+    useCallback(() => {
+      detailsSheetRef.current?.dismiss();
+      setSelectedClient(null);
+      setSearch('');
+      setDebouncedSearch('');
+    }, [])
+  );
 
   useEffect(() => {
     isMounted.current = true;

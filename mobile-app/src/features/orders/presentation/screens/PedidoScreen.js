@@ -312,6 +312,7 @@ export default function Pedido() {
                 if (!deliveryDate) {
                   setDeliveryDate(formatDateToISO(getToday()));
                 }
+                setShowDatePicker(false);
                 setCheckoutModalVisible(true);
               }
             }
@@ -327,6 +328,7 @@ export default function Pedido() {
     if (!deliveryDate) {
       setDeliveryDate(formatDateToISO(getToday()));
     }
+    setShowDatePicker(false);
     setCheckoutModalVisible(true);
   };
 
@@ -490,18 +492,23 @@ export default function Pedido() {
       }
     };
 
-    Alert.alert(
-      'Confirmar Pedido',
-      `Deseas enviar este pedido por un total de $${getTotal().toFixed(2)}?\nFecha: ${safeDate}\nAlmacen: ${warehouse.code} - ${warehouse.name}`,
-      [
+    const confirmMessage = `Deseas enviar este pedido por un total de $${getTotal().toFixed(2)}?\nFecha: ${safeDate}\nAlmacen: ${warehouse.code} - ${warehouse.name}`;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const confirmed = window.confirm(confirmMessage);
+      if (confirmed) {
+        sendOrder();
+      }
+      return;
+    }
+
+    Alert.alert('Confirmar Pedido', confirmMessage, [
       { text: 'Cancelar', style: 'cancel' },
       {
         style: 'destructive',
         text: 'Enviar',
         onPress: sendOrder
       }
-      ]
-    );
+    ]);
   };
 
   const handleDateChange = (event, selectedDate) => {
@@ -514,7 +521,7 @@ export default function Pedido() {
 
     const normalized = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
     setDeliveryDate(formatDateToISO(normalized));
-    if (Platform.OS === 'android') {
+    if (Platform.OS === 'android' || Platform.OS === 'ios') {
       setShowDatePicker(false);
     }
   };
@@ -532,7 +539,21 @@ export default function Pedido() {
       return;
     }
 
-    setShowDatePicker(true);
+    setShowDatePicker((prev) => !prev);
+  };
+  const minDeliveryDateIso = useMemo(() => formatDateToISO(getToday()), []);
+
+  const handleClearCartPress = () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const confirmed = window.confirm('Borrar todo el carrito?');
+      if (confirmed) clearCart();
+      return;
+    }
+
+    Alert.alert('Vaciar', 'Borrar todo el carrito?', [
+      { text: 'No' },
+      { text: 'Si', onPress: clearCart }
+    ]);
   };
 
   const renderItem = ({ item }) => {
@@ -856,12 +877,7 @@ export default function Pedido() {
                 mode="text"
                 textColor={COLORS.secondary}
                 style={styles.btnCancel}
-                onPress={() => {
-                  Alert.alert('Vaciar', 'Borrar todo el carrito?', [
-                    { text: 'No' },
-                    { text: 'Si', onPress: clearCart }
-                  ]);
-                }}
+                onPress={handleClearCartPress}
               >
                 VACIAR
               </Button>
@@ -898,23 +914,49 @@ export default function Pedido() {
           <Pressable style={styles.checkoutPanel} onPress={(event) => event.stopPropagation()}>
             <Text style={styles.checkoutTitle}>Datos de entrega</Text>
             <Text style={styles.checkoutLabel}>Fecha de entrega</Text>
-            <Pressable style={styles.checkoutDateButton} onPress={handleOpenDatePicker}>
-              <View style={styles.checkoutDateButtonContent}>
-                <Ionicons name="calendar-outline" size={18} color={COLORS.primary} />
-                <Text style={deliveryDate ? styles.checkoutDateValue : styles.checkoutDatePlaceholder}>
-                  {deliveryDate || formatDateToISO(getToday())}
-                </Text>
+            {Platform.OS === 'web' ? (
+              <View style={styles.webDateInputWrap}>
+                <input
+                  type="date"
+                  min={minDeliveryDateIso}
+                  value={deliveryDate || minDeliveryDateIso}
+                  onChange={(event) => setDeliveryDate(String(event?.target?.value || ''))}
+                  style={{
+                    width: '100%',
+                    height: 30,
+                    border: 'none',
+                    outline: 'none',
+                    fontSize: 15,
+                    fontWeight: 700,
+                    color: COLORS.text,
+                    backgroundColor: '#FFF'
+                  }}
+                />
               </View>
-            </Pressable>
-            <Text style={styles.checkoutDateHint}>{formatDateForDisplay(deliveryDate || formatDateToISO(getToday()))}</Text>
-            {Platform.OS === 'ios' && showDatePicker && (
-              <DateTimePicker
-                value={parseISODate(deliveryDate) || getToday()}
-                mode="date"
-                minimumDate={getToday()}
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={handleDateChange}
-              />
+            ) : (
+              <Pressable style={styles.checkoutDateButton} onPress={handleOpenDatePicker}>
+                <View style={styles.checkoutDateButtonContent}>
+                  <Ionicons name="calendar-outline" size={18} color={COLORS.primary} />
+                  <Text style={deliveryDate ? styles.checkoutDateValue : styles.checkoutDatePlaceholder}>
+                    {deliveryDate || minDeliveryDateIso}
+                  </Text>
+                </View>
+              </Pressable>
+            )}
+            <Text style={styles.checkoutDateHint}>{formatDateForDisplay(deliveryDate || minDeliveryDateIso)}</Text>
+            {Platform.OS !== 'android' && showDatePicker && (
+              <View style={Platform.OS === 'ios' ? styles.iosDatePickerWrap : undefined}>
+                <DateTimePicker
+                  value={parseISODate(deliveryDate) || getToday()}
+                  mode="date"
+                  minimumDate={getToday()}
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  themeVariant={Platform.OS === 'ios' ? 'light' : undefined}
+                  accentColor={Platform.OS === 'ios' ? COLORS.primary : undefined}
+                  style={Platform.OS === 'ios' ? styles.iosDatePicker : undefined}
+                  onChange={handleDateChange}
+                />
+              </View>
             )}
 
             <Text style={styles.checkoutLabel}>Almacen de origen</Text>
@@ -1126,9 +1168,29 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF'
   },
   checkoutDateButtonContent: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  webDateInputWrap: {
+    borderWidth: 1,
+    borderColor: '#D6DFEA',
+    borderRadius: 10,
+    height: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    backgroundColor: '#FFF'
+  },
   checkoutDateValue: { fontSize: 15, fontWeight: '700', color: COLORS.text },
   checkoutDatePlaceholder: { fontSize: 15, color: COLORS.textLight },
   checkoutDateHint: { fontSize: 12, color: COLORS.textLight, marginTop: 6 },
+  iosDatePickerWrap: {
+    marginTop: 8,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#FFF'
+  },
+  iosDatePicker: {
+    backgroundColor: '#FFF',
+    width: '100%',
+    height: 160
+  },
   checkoutCommentsInput: {
     marginTop: 2,
     minHeight: 86,

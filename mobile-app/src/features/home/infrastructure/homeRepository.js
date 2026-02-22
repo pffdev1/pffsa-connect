@@ -31,7 +31,14 @@ export const fetchOrdersInRange = async ({ fromIso, toIso, createdBy = '', limit
 };
 
 export const fetchAllOrders = async ({ createdBy = '' } = {}) => {
-  const attempts = ['id, created_by, seller_id, status, created_at', 'id, created_by, status, created_at', 'id, seller_id, status, created_at'];
+  const attempts = [
+    'id, card_code, sap_docnum, created_by, seller_id, status, created_at, doc_due_date',
+    'id, card_code, sap_docnum, created_by, status, created_at, doc_due_date',
+    'id, card_code, sap_docnum, seller_id, status, created_at, doc_due_date',
+    'id, created_by, seller_id, status, created_at',
+    'id, created_by, status, created_at',
+    'id, seller_id, status, created_at'
+  ];
   for (const select of attempts) {
     let query = supabase.from('sales_orders').select(select).order('created_at', { ascending: false });
     if (createdBy) {

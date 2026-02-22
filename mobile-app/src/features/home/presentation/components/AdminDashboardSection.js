@@ -7,16 +7,20 @@ import { LinearGradient } from 'expo-linear-gradient';
 export default function AdminDashboardSection({
   loading,
   adminKpis,
-  adminTopSellers,
   adminHealth,
   toMoney,
   formatDateTime,
   getHealthLabel,
   handleOpenOrdersToday,
   handleOpenSalesSummary,
+  handleOpenErrorOrders,
   onOpenAdminPanel,
   styles
 }) {
+  const errorRate = Number(adminKpis?.errorRate || 0);
+  const errorRateTone = errorRate >= 10 ? 'danger' : errorRate >= 3 ? 'warn' : 'success';
+  const errorRateToneText = errorRateTone === 'danger' ? 'Alta' : errorRateTone === 'warn' ? 'Media' : 'Baja';
+
   return (
     <>
       <View style={[styles.kpiRow, styles.kpiRowOverlay]}>
@@ -39,42 +43,53 @@ export default function AdminDashboardSection({
       </View>
 
       <View style={styles.kpiRow}>
+        <Pressable style={styles.kpiCard} onPress={handleOpenErrorOrders}>
+          <View style={styles.kpiIconWrap}>
+            <Ionicons name="alert-circle-outline" size={22} color="#003a78" />
+          </View>
+          <Text style={styles.kpiLabel}>Pedidos con error</Text>
+          <Text style={styles.kpiValue}>{loading ? '...' : adminKpis.errorOrders}</Text>
+          <Text style={styles.kpiHint}>Ver detalle</Text>
+        </Pressable>
         <View style={styles.kpiCard}>
           <View style={styles.kpiIconWrap}>
-            <Ionicons name="people-outline" size={22} color="#003a78" />
+            <Ionicons name="analytics-outline" size={22} color="#003a78" />
           </View>
-          <Text style={styles.kpiLabel}>Vendedores activos</Text>
-          <Text style={styles.kpiValue}>{loading ? '...' : adminKpis.activeSellers}</Text>
-        </View>
-        <View style={styles.kpiCard}>
-          <View style={styles.kpiIconWrap}>
-            <Ionicons name="time-outline" size={22} color="#003a78" />
-          </View>
-          <Text style={styles.kpiLabel}>Pendientes</Text>
-          <Text style={styles.kpiValue}>{loading ? '...' : adminKpis.pendingOrders}</Text>
+          <Text style={styles.kpiLabel}>Tasa de error</Text>
+          <Text
+            style={[
+              styles.kpiValue,
+              errorRateTone === 'danger'
+                ? styles.kpiValueDanger
+                : errorRateTone === 'warn'
+                  ? styles.kpiValueWarn
+                  : styles.kpiValueSuccess
+            ]}
+          >
+            {loading ? '...' : `${errorRate.toFixed(1)}%`}
+          </Text>
+          <Text
+            style={[
+              styles.kpiHint,
+              errorRateTone === 'danger'
+                ? styles.kpiValueDanger
+                : errorRateTone === 'warn'
+                  ? styles.kpiValueWarn
+                  : styles.kpiValueSuccess
+            ]}
+          >
+            {loading ? '...' : `${errorRateToneText} prioridad`}
+          </Text>
         </View>
       </View>
 
       <Surface style={styles.block} elevation={0}>
         <View style={styles.blockHeaderRow}>
-          <Text style={styles.blockTitle}>Control de vendedores</Text>
-          <Button compact mode="text" onPress={onOpenAdminPanel}>
-            Ir a panel admin
-          </Button>
+          <Text style={styles.blockTitle}>Panel administrativo</Text>
         </View>
-        {adminTopSellers.length === 0 ? (
-          <Text style={styles.blockHint}>Sin actividad de vendedores.</Text>
-        ) : (
-          adminTopSellers.map((seller) => (
-            <View key={seller.id} style={styles.adminSellerRow}>
-              <View style={styles.adminSellerMain}>
-                <Text style={styles.adminSellerName}>{seller.fullName}</Text>
-                <Text style={styles.adminSellerMeta}>{seller.email || 'Sin correo'}</Text>
-              </View>
-              <Text style={styles.adminSellerMetric}>{seller.ordersCount} pedidos</Text>
-            </View>
-          ))
-        )}
+        <Button mode="contained" onPress={onOpenAdminPanel}>
+          Ir a panel admin
+        </Button>
       </Surface>
 
       <LinearGradient colors={['#FFFFFF', '#F3F8FF']} style={styles.realtimeBlock}>

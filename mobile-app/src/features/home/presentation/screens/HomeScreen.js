@@ -18,6 +18,7 @@ import {
 } from '../../domain/homeDomain';
 import {
   loadAdminDashboardData,
+  loadErrorOrdersDetailsData,
   loadOrdersTodayDetailsData,
   loadSalesSummaryData,
   loadUserContext,
@@ -28,6 +29,7 @@ import AdminDashboardSection from '../components/AdminDashboardSection';
 import SellerDashboardSection from '../components/SellerDashboardSection';
 import OrdersTodayModal from '../components/OrdersTodayModal';
 import SalesSummaryModal from '../components/SalesSummaryModal';
+import ErrorOrdersModal from '../components/ErrorOrdersModal';
 const MAX_UNLOCK_NOTIFICATIONS = 30;
 const NOTIFICATION_DEDUPE_WINDOW_MS = 2 * 60 * 1000;
 
@@ -45,6 +47,9 @@ export default function HomeScreen() {
   const [ordersTodayModalVisible, setOrdersTodayModalVisible] = useState(false);
   const [ordersTodayRows, setOrdersTodayRows] = useState([]);
   const [loadingOrdersToday, setLoadingOrdersToday] = useState(false);
+  const [errorOrdersModalVisible, setErrorOrdersModalVisible] = useState(false);
+  const [errorOrdersRows, setErrorOrdersRows] = useState([]);
+  const [loadingErrorOrders, setLoadingErrorOrders] = useState(false);
   const [salesSummaryModalVisible, setSalesSummaryModalVisible] = useState(false);
   const [allOrdersCount, setAllOrdersCount] = useState(0);
   const [allSalesTotal, setAllSalesTotal] = useState(0);
@@ -54,7 +59,8 @@ export default function HomeScreen() {
     salesToday: 0,
     activeSellers: 0,
     pendingOrders: 0,
-    errorOrders: 0
+    errorOrders: 0,
+    errorRate: 0
   });
   const [adminTopSellers, setAdminTopSellers] = useState([]);
   const [adminHealth, setAdminHealth] = useState({
@@ -87,7 +93,8 @@ export default function HomeScreen() {
         salesToday: 0,
         activeSellers: 0,
         pendingOrders: 0,
-        errorOrders: 0
+        errorOrders: 0,
+        errorRate: 0
       });
       setAdminTopSellers([]);
       setAdminHealth({
@@ -327,6 +334,24 @@ export default function HomeScreen() {
     await loadSalesSummary();
   }, [loadSalesSummary]);
 
+  const loadErrorOrdersDetails = useCallback(async () => {
+    if (!authUserId) return;
+    try {
+      setLoadingErrorOrders(true);
+      const rows = await loadErrorOrdersDetailsData({ authUserId, role: profileRole });
+      setErrorOrdersRows(rows);
+    } catch (_error) {
+      setErrorOrdersRows([]);
+    } finally {
+      setLoadingErrorOrders(false);
+    }
+  }, [authUserId, profileRole]);
+
+  const handleOpenErrorOrders = useCallback(async () => {
+    setErrorOrdersModalVisible(true);
+    await loadErrorOrdersDetails();
+  }, [loadErrorOrdersDetails]);
+
   const screenOptions = useMemo(
     () => ({
       headerShown: false,
@@ -380,6 +405,7 @@ export default function HomeScreen() {
                 getHealthLabel={getHealthLabel}
                 handleOpenOrdersToday={handleOpenOrdersToday}
                 handleOpenSalesSummary={handleOpenSalesSummary}
+                handleOpenErrorOrders={handleOpenErrorOrders}
                 onOpenAdminPanel={() => router.push('/(tabs)/perfil')}
                 styles={styles}
               />
@@ -419,6 +445,15 @@ export default function HomeScreen() {
         allOrdersCount={allOrdersCount}
         allSalesTotal={allSalesTotal}
         toMoney={toMoney}
+        styles={styles}
+      />
+      <ErrorOrdersModal
+        visible={errorOrdersModalVisible}
+        onClose={() => setErrorOrdersModalVisible(false)}
+        loading={loadingErrorOrders}
+        rows={errorOrdersRows}
+        toMoney={toMoney}
+        formatDateTime={formatDateTime}
         styles={styles}
       />
 
@@ -526,6 +561,9 @@ const styles = StyleSheet.create({
   },
   kpiLabel: { color: COLORS.textLight, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
   kpiValue: { marginTop: 6, color: COLORS.primary, fontSize: 24, fontWeight: '800' },
+  kpiValueSuccess: { color: '#27AE60' },
+  kpiValueWarn: { color: '#F39C12' },
+  kpiValueDanger: { color: '#E74C3C' },
   kpiHint: { marginTop: 'auto', color: COLORS.textLight, fontSize: 11, fontWeight: '600' },
   block: {
     borderRadius: 14,

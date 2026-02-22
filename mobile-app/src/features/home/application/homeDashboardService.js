@@ -121,12 +121,14 @@ export const loadAdminDashboardData = async () => {
   const topSellers = sortedSellers.slice(0, 5);
   const summary = sellerRows.reduce(
     (acc, row) => ({
+      totalOrders: acc.totalOrders + row.ordersCount,
       activeSellers: acc.activeSellers + (row.ordersCount > 0 ? 1 : 0),
       pendingOrders: acc.pendingOrders + row.pendingCount,
       errorOrders: acc.errorOrders + row.errorCount
     }),
-    { activeSellers: 0, pendingOrders: 0, errorOrders: 0 }
+    { totalOrders: 0, activeSellers: 0, pendingOrders: 0, errorOrders: 0 }
   );
+  const errorRate = summary.totalOrders > 0 ? (summary.errorOrders / summary.totalOrders) * 100 : 0;
 
   const probes = await probeEnvironmentHealth();
   const [sessionProbe, profilesProbe, customersProbe, ordersProbe] = probes;
@@ -144,7 +146,8 @@ export const loadAdminDashboardData = async () => {
       salesToday: resolveOrderTotal(todayLinesRows || []),
       activeSellers: summary.activeSellers,
       pendingOrders: summary.pendingOrders,
-      errorOrders: summary.errorOrders
+      errorOrders: summary.errorOrders,
+      errorRate
     },
     adminTopSellers: topSellers,
     adminHealth: health
@@ -241,4 +244,74 @@ export const loadSalesSummaryData = async ({ authUserId, role }) => {
     allOrdersCount: allOrderIds.length,
     allSalesTotal: resolveOrderTotal(linesRows || [])
   };
+};
+
+export const loadErrorOrdersDetailsData = async ({ authUserId, role }) => {
+  const { data: allOrders, error: ordersError } = await fetchAllOrders({
+    createdBy: role === 'admin' ? '' : authUserId
+  });
+  if (ordersError) throw ordersError;
+
+  const scopedOrders =
+    role === 'admin' ? allOrders || [] : (allOrders || []).filter((row) => String(resolveOrderSellerId(row) || '').trim() === authUserId);
+  const errorRows = scopedOrders.filter((row) => {
+    const status = normalizeOrderStatus(row?.status);
+    return status === 'error' || status === 'blocked';
+  });
+
+  if (errorRows.length === 0) return [];
+
+  const orderIds = Array.from(new Set(errorRows.map((row) => String(row?.id || '').trim()).filter(Boolean)));
+  const cardCodes = Array.from(new Set(errorRows.map((row) => String(row?.card_code || '').trim()).filter(Boolean)));
+  const sellerIds = Array.from(new Set(errorRows.map((row) => resolveOrderSellerId(row)).filter(Boolean)));
+
+  const [customerRows, lineResult, sellerRows] = await Promise.all([
+    fetchCustomerNamesByCardCodes(cardCodes),
+    fetchLinesByOrderIds(orderIds),
+    fetchSellerNamesByIds(sellerIds)
+  ]);
+
+  const namesByCode = new Map();
+  const sellerByCode = new Map();
+  (customerRows || []).forEach((row) => {
+    const code = String(row?.CardCode || row?.card_code || '').trim();
+    if (!code) return;
+    const name = String(row?.CardFName || row?.CardName || row?.card_f_name || row?.card_name || '').trim();
+    if (name) namesByCode.set(code, name);
+    const seller = String(row?.Vendedor || row?.vendedor || '').trim();
+    if (seller) sellerByCode.set(code, seller);
+  });
+
+  const sellersById = new Map();
+  (sellerRows || []).forEach((row) => {
+    const id = String(row?.id || '').trim();
+    if (!id) return;
+    const name = String(row?.full_name || row?.email || '').trim();
+    if (!name) return;
+    sellersById.set(id, name);
+  });
+
+  const totalsByOrderId = new Map();
+  (lineResult?.data || []).forEach((row) => {
+    const orderId = resolveLineOrderId(row);
+    if (!orderId) return;
+    const running = Number(totalsByOrderId.get(orderId) || 0);
+    totalsByOrderId.set(orderId, running + resolveLineTotal(row));
+  });
+
+  return errorRows.slice(0, 120).map((row) => {
+    const orderId = String(row?.id || '').trim();
+    const cardCode = String(row?.card_code || '').trim();
+    const createdBy = resolveOrderSellerId(row);
+    return {
+      ...row,
+      customer_name: namesByCode.get(cardCode) || '',
+      seller_name:
+        sellersById.get(createdBy) ||
+        String(row?.seller_name || row?.seller || row?.vendedor || '').trim() ||
+        sellerByCode.get(cardCode) ||
+        'Sin vendedor',
+      order_total: Number(totalsByOrderId.get(orderId) || 0)
+    };
+  });
 };

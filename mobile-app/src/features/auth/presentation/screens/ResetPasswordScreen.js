@@ -27,15 +27,32 @@ const resetSchema = z
 const parseAuthTokensFromUrl = (url = '') => {
   if (!url) return {};
 
-  const hashIndex = url.indexOf('#');
-  const queryString = hashIndex >= 0 ? url.slice(hashIndex + 1) : url.split('?')[1] || '';
-  const params = new URLSearchParams(queryString);
+  const extractParams = (input = '') => {
+    const params = new URLSearchParams();
+    if (!input) return params;
+    const clean = String(input || '').replace(/^[?#]/, '');
+    if (!clean) return params;
+    const parsed = new URLSearchParams(clean);
+    parsed.forEach((value, key) => params.set(key, value));
+    return params;
+  };
+
+  const queryPart = url.split('?')[1]?.split('#')[0] || '';
+  const hashPart = url.split('#')[1] || '';
+  const queryParams = extractParams(queryPart);
+  const hashParams = extractParams(hashPart);
+  const params = new URLSearchParams();
+  queryParams.forEach((value, key) => params.set(key, value));
+  hashParams.forEach((value, key) => params.set(key, value));
 
   return {
     access_token: params.get('access_token') || '',
     refresh_token: params.get('refresh_token') || '',
     code: params.get('code') || '',
-    type: params.get('type') || ''
+    token_hash: params.get('token_hash') || '',
+    token: params.get('token') || '',
+    type: params.get('type') || '',
+    error_description: params.get('error_description') || ''
   };
 };
 
@@ -78,11 +95,20 @@ export default function ResetPasswordScreen() {
       const accessToken = String(payload?.access_token || '').trim();
       const refreshToken = String(payload?.refresh_token || '').trim();
       const code = String(payload?.code || '').trim();
+      const tokenHash = String(payload?.token_hash || payload?.token || '').trim();
       const type = String(payload?.type || '').trim().toLowerCase();
       if (type && type !== 'recovery') return false;
 
       if (code) {
         const { error } = await supabase.auth.exchangeCodeForSession(code);
+        return !error;
+      }
+
+      if (tokenHash) {
+        const { error } = await supabase.auth.verifyOtp({
+          token_hash: tokenHash,
+          type: 'recovery'
+        });
         return !error;
       }
 
