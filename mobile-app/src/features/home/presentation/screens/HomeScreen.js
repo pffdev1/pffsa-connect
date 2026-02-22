@@ -70,6 +70,12 @@ export default function HomeScreen() {
     orders: 'checking',
     checkedAt: ''
   });
+  const [adminQueueHealth, setAdminQueueHealth] = useState({
+    queuedTotal: 0,
+    queued15m: 0,
+    queued30m: 0,
+    processingTotal: 0
+  });
   const [unlockNotifications, setUnlockNotifications] = useState([]);
   const [notificationsVisible, setNotificationsVisible] = useState(false);
   const unlockNotificationIndexRef = useRef(new Map());
@@ -83,10 +89,16 @@ export default function HomeScreen() {
 
   const loadAdminDashboard = useCallback(async () => {
     try {
-      const { adminKpis: nextKpis, adminTopSellers: nextTopSellers, adminHealth: nextHealth } = await loadAdminDashboardData();
+      const {
+        adminKpis: nextKpis,
+        adminTopSellers: nextTopSellers,
+        adminHealth: nextHealth,
+        adminQueueHealth: nextQueueHealth
+      } = await loadAdminDashboardData();
       setAdminKpis(nextKpis);
       setAdminTopSellers(nextTopSellers);
       setAdminHealth(nextHealth);
+      setAdminQueueHealth(nextQueueHealth || { queuedTotal: 0, queued15m: 0, queued30m: 0, processingTotal: 0 });
     } catch (_error) {
       setAdminKpis({
         ordersToday: 0,
@@ -103,6 +115,12 @@ export default function HomeScreen() {
         customers: 'error',
         orders: 'error',
         checkedAt: new Date().toISOString()
+      });
+      setAdminQueueHealth({
+        queuedTotal: 0,
+        queued15m: 0,
+        queued30m: 0,
+        processingTotal: 0
       });
     }
   }, []);
@@ -262,11 +280,19 @@ export default function HomeScreen() {
         data: { user }
       } = await supabase.auth.getUser();
       if (!active || !user?.id) return;
+      const isAdminRole = profileRole === 'admin';
+      const channelName = isAdminRole ? `home-orders-admin-${user.id}` : `home-orders-${user.id}`;
+      const realtimeFilter = isAdminRole ? { event: '*', schema: 'public', table: 'sales_orders' } : {
+        event: '*',
+        schema: 'public',
+        table: 'sales_orders',
+        filter: `created_by=eq.${user.id}`
+      };
       channel = supabase
-        .channel(`home-orders-${user.id}`)
+        .channel(channelName)
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'sales_orders', filter: `created_by=eq.${user.id}` },
+          realtimeFilter,
           () => {
             setLastRealtimeEventAt(new Date().toLocaleTimeString('es-PA', { hour: '2-digit', minute: '2-digit' }));
             loadHome({ showLoader: false });
@@ -279,7 +305,7 @@ export default function HomeScreen() {
       active = false;
       if (channel) supabase.removeChannel(channel);
     };
-  }, [loadHome]);
+  }, [loadHome, profileRole]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -400,6 +426,7 @@ export default function HomeScreen() {
                 adminKpis={adminKpis}
                 adminTopSellers={adminTopSellers}
                 adminHealth={adminHealth}
+                adminQueueHealth={adminQueueHealth}
                 toMoney={toMoney}
                 formatDateTime={formatDateTime}
                 getHealthLabel={getHealthLabel}

@@ -63,6 +63,7 @@ export default function Perfil() {
   const [selectedOrderStatus, setSelectedOrderStatus] = useState(null);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [selectedOrderCustomerName, setSelectedOrderCustomerName] = useState('');
+  const [retryingOrderId, setRetryingOrderId] = useState('');
   const [orderLines, setOrderLines] = useState([]);
   const [loadingOrderLines, setLoadingOrderLines] = useState(false);
   const [orderLinesError, setOrderLinesError] = useState('');
@@ -83,6 +84,12 @@ export default function Perfil() {
     pending: 0,
     error: 0,
     activeSellers: 0
+  });
+  const [adminQueueHealth, setAdminQueueHealth] = useState({
+    queuedTotal: 0,
+    queued15m: 0,
+    queued30m: 0,
+    processingTotal: 0
   });
   const [sellerOrdersVisible, setSellerOrdersVisible] = useState(false);
   const [selectedSeller, setSelectedSeller] = useState(null);
@@ -222,12 +229,34 @@ export default function Perfil() {
 
       setSellerRows(normalizedRows);
       setAdminKpis(aggregate);
+      try {
+        const { data: queueRow } = await supabase.from('vw_sales_orders_queue_health').select('*').maybeSingle();
+        setAdminQueueHealth({
+          queuedTotal: Number(queueRow?.queued_total) || 0,
+          queued15m: Number(queueRow?.queued_15m) || 0,
+          queued30m: Number(queueRow?.queued_30m) || 0,
+          processingTotal: Number(queueRow?.processing_total) || 0
+        });
+      } catch (_queueError) {
+        setAdminQueueHealth({
+          queuedTotal: 0,
+          queued15m: 0,
+          queued30m: 0,
+          processingTotal: 0
+        });
+      }
       setAdminError('');
       setShowAllSellers(false);
     } catch (error) {
       console.error('admin dashboard load failed:', error);
       setSellerRows([]);
       setAdminKpis({ orders: 0, sent: 0, pending: 0, error: 0, activeSellers: 0 });
+      setAdminQueueHealth({
+        queuedTotal: 0,
+        queued15m: 0,
+        queued30m: 0,
+        processingTotal: 0
+      });
       setAdminError('No se pudo cargar el panel de vendedores.');
     } finally {
       setAdminLoading(false);
@@ -559,10 +588,59 @@ export default function Perfil() {
   const handleCloseOrderDetail = () => {
     setOrderDetailVisible(false);
     setSelectedOrder(null);
+    setRetryingOrderId('');
     setSelectedOrderCustomerName('');
     setOrderLines([]);
     setOrderLinesError('');
   };
+
+  const handleRetryOrder = useCallback(async () => {
+    const orderId = String(selectedOrder?.id || '').trim();
+    const currentStatus = String(selectedOrder?.status || '').trim().toLowerCase();
+    if (!orderId || !authUserId || role === 'admin' || currentStatus !== 'error') {
+      return;
+    }
+
+    try {
+      setRetryingOrderId(orderId);
+      const updateAttempts = [
+        { status: 'queued', last_error: null, updated_at: new Date().toISOString() },
+        { status: 'queued', last_error: null },
+        { status: 'queued' }
+      ];
+
+      let updateError = null;
+      for (const payload of updateAttempts) {
+        const result = await supabase
+          .from('sales_orders')
+          .update(payload)
+          .eq('id', orderId)
+          .eq('created_by', authUserId)
+          .select('id, status, last_error')
+          .maybeSingle();
+        if (!result.error) {
+          updateError = null;
+          break;
+        }
+        updateError = result.error;
+      }
+
+      if (updateError) throw updateError;
+
+      setSelectedOrder((prev) => (prev ? { ...prev, status: 'queued', last_error: '' } : prev));
+      setRecentOrders((prev) =>
+        (Array.isArray(prev) ? prev : []).map((row) =>
+          String(row?.id || '').trim() === orderId ? { ...row, status: 'queued', last_error: '' } : row
+        )
+      );
+      await refreshOrdersFirstPage(authUserId);
+      alert('Pedido encolado nuevamente para reintento automatico.');
+    } catch (error) {
+      alert(error?.message || 'No se pudo reintentar el pedido.');
+    } finally {
+      setRetryingOrderId('');
+    }
+  }, [selectedOrder, authUserId, role, refreshOrdersFirstPage]);
 
   const handleChangePassword = handleSubmit(async ({ newPassword }) => {
     try {
@@ -864,6 +942,22 @@ export default function Perfil() {
         </Surface>
       </View>
       <Text style={styles.adminKpiFooter}>Vendedores activos con pedidos: {adminKpis.activeSellers}</Text>
+      <Surface style={styles.adminWatchdogCard} elevation={0}>
+        <View style={styles.adminWatchdogHeader}>
+          <Text style={styles.adminWatchdogTitle}>Watchdog de cola</Text>
+          <Text style={[styles.adminWatchdogValue, adminQueueHealth.queued15m > 0 ? styles.adminWatchdogAlert : null]}>
+            {adminQueueHealth.queued15m}
+          </Text>
+        </View>
+        <Text style={styles.adminWatchdogSubtitle}>
+          Pedidos en cola por mas de 15 minutos
+        </Text>
+        <View style={styles.adminWatchdogMetaRow}>
+          <Text style={styles.adminWatchdogMeta}>Cola total: {adminQueueHealth.queuedTotal}</Text>
+          <Text style={styles.adminWatchdogMeta}>Cola 30m: {adminQueueHealth.queued30m}</Text>
+          <Text style={styles.adminWatchdogMeta}>Procesando: {adminQueueHealth.processingTotal}</Text>
+        </View>
+      </Surface>
 
       <SegmentedButtons
         value={adminTab}
@@ -1017,7 +1111,22 @@ export default function Perfil() {
             </Text>
             <Text style={styles.detailMeta}>Entrega: {selectedOrder?.doc_due_date || 'N/A'}</Text>
             <Text style={styles.detailMeta}>Creado: {formatDateTime(selectedOrder?.created_at)}</Text>
+            {!!String(selectedOrder?.last_error || '').trim() && (
+              <Text style={styles.detailMetaError}>Ultimo error: {String(selectedOrder?.last_error || '').trim()}</Text>
+            )}
             <Text style={styles.detailMetaTotal}>Total pedido: {formatMoney(orderLinesTotal)}</Text>
+            {role !== 'admin' && String(selectedOrder?.status || '').trim().toLowerCase() === 'error' && (
+              <Button
+                mode="contained"
+                buttonColor={COLORS.secondary}
+                style={styles.retryOrderButton}
+                loading={retryingOrderId === String(selectedOrder?.id || '').trim()}
+                disabled={retryingOrderId === String(selectedOrder?.id || '').trim()}
+                onPress={handleRetryOrder}
+              >
+                Intentar nuevamente
+              </Button>
+            )}
             {orderLines.length > ORDER_LINES_PREVIEW_LIMIT && (
               <Text style={styles.detailMetaHighlight}>
                 Mostrando las ultimas {ORDER_LINES_PREVIEW_LIMIT} lineas de {orderLines.length}.
@@ -1276,6 +1385,26 @@ const styles = StyleSheet.create({
   adminKpiLabel: { color: COLORS.textLight, fontSize: 11, fontWeight: '600' },
   adminKpiValue: { marginTop: 2, color: COLORS.primary, fontSize: 15, fontWeight: '800' },
   adminKpiFooter: { marginTop: 8, color: COLORS.textLight, fontSize: 12, fontWeight: '600' },
+  adminWatchdogCard: {
+    marginTop: 10,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#F7FAFF',
+    borderWidth: 1,
+    borderColor: '#E7EEF8'
+  },
+  adminWatchdogHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  adminWatchdogTitle: { color: COLORS.text, fontSize: 13, fontWeight: '700' },
+  adminWatchdogValue: { color: '#16A085', fontSize: 20, fontWeight: '800' },
+  adminWatchdogAlert: { color: '#E74C3C' },
+  adminWatchdogSubtitle: { marginTop: 3, color: COLORS.textLight, fontSize: 11, fontWeight: '600' },
+  adminWatchdogMetaRow: { marginTop: 8, flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+  adminWatchdogMeta: { color: COLORS.textLight, fontSize: 11, fontWeight: '600' },
 
   adminListWrap: { gap: 10, marginTop: 8 },
   sellerCard: {
@@ -1337,7 +1466,9 @@ const styles = StyleSheet.create({
   detailHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   detailTitle: { color: COLORS.primary, fontWeight: '800', fontSize: 16, marginRight: 8, flex: 1 },
   detailMeta: { color: COLORS.textLight, fontSize: 12, marginTop: 4 },
+  detailMetaError: { color: '#B00020', fontSize: 12, marginTop: 4, fontWeight: '600' },
   detailMetaTotal: { color: COLORS.primary, fontSize: 13, marginTop: 6, fontWeight: '800' },
+  retryOrderButton: { marginTop: 10, borderRadius: 8, alignSelf: 'flex-start' },
   detailMetaHighlight: { color: COLORS.primary, fontSize: 12, marginTop: 6, fontWeight: '700' },
   detailLinesWrap: { marginTop: 10, borderTopWidth: 1, borderTopColor: '#EEF1F4', paddingTop: 8, minHeight: 120, flex: 1 },
   linesList: { flex: 1 },

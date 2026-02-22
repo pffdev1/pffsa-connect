@@ -80,6 +80,7 @@ export const fetchSellerNamesByIds = async (sellerIds = []) => {
 };
 
 export const fetchAdminSellerStats = async () => supabase.rpc('get_admin_seller_stats');
+export const fetchQueueHealth = async () => supabase.from('vw_sales_orders_queue_health').select('*').maybeSingle();
 
 export const probeEnvironmentHealth = async () =>
   Promise.allSettled([

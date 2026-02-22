@@ -8,6 +8,7 @@ export default function AdminDashboardSection({
   loading,
   adminKpis,
   adminHealth,
+  adminQueueHealth,
   toMoney,
   formatDateTime,
   getHealthLabel,
@@ -82,6 +83,35 @@ export default function AdminDashboardSection({
           </Text>
         </View>
       </View>
+      <Surface style={styles.block} elevation={0}>
+        <View style={styles.blockHeaderRow}>
+          <Text style={styles.blockTitle}>Watchdog de cola</Text>
+          <Text
+            style={[
+              styles.kpiValue,
+              { marginTop: 0, fontSize: 22 },
+              Number(adminQueueHealth?.queued15m || 0) > 0 ? styles.kpiValueDanger : styles.kpiValueSuccess
+            ]}
+          >
+            {loading ? '...' : Number(adminQueueHealth?.queued15m || 0)}
+          </Text>
+        </View>
+        <Text style={styles.blockHint}>Pedidos en cola por mas de 15 minutos</Text>
+        <View style={styles.healthGrid}>
+          <View style={styles.healthCard}>
+            <Text style={styles.healthLabel}>Cola total</Text>
+            <Text style={styles.healthValue}>{loading ? '...' : Number(adminQueueHealth?.queuedTotal || 0)}</Text>
+          </View>
+          <View style={styles.healthCard}>
+            <Text style={styles.healthLabel}>Cola 30m</Text>
+            <Text style={styles.healthValue}>{loading ? '...' : Number(adminQueueHealth?.queued30m || 0)}</Text>
+          </View>
+          <View style={styles.healthCard}>
+            <Text style={styles.healthLabel}>Procesando</Text>
+            <Text style={styles.healthValue}>{loading ? '...' : Number(adminQueueHealth?.processingTotal || 0)}</Text>
+          </View>
+        </View>
+      </Surface>
 
       <Surface style={styles.block} elevation={0}>
         <View style={styles.blockHeaderRow}>

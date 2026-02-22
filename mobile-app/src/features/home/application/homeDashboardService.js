@@ -16,6 +16,7 @@ import {
   fetchLinesByOrderIds,
   fetchOrdersInRange,
   fetchProfile,
+  fetchQueueHealth,
   fetchSellerNamesByIds,
   probeEnvironmentHealth
 } from '../infrastructure/homeRepository';
@@ -139,6 +140,23 @@ export const loadAdminDashboardData = async () => {
     orders: ordersProbe.status === 'fulfilled' && !ordersProbe.value?.error ? 'ok' : 'error',
     checkedAt: new Date().toISOString()
   };
+  let queueHealth = {
+    queuedTotal: 0,
+    queued15m: 0,
+    queued30m: 0,
+    processingTotal: 0
+  };
+  try {
+    const { data: queueRow } = await fetchQueueHealth();
+    queueHealth = {
+      queuedTotal: Number(queueRow?.queued_total) || 0,
+      queued15m: Number(queueRow?.queued_15m) || 0,
+      queued30m: Number(queueRow?.queued_30m) || 0,
+      processingTotal: Number(queueRow?.processing_total) || 0
+    };
+  } catch (_error) {
+    // Keep zero fallback when watchdog view is not available.
+  }
 
   return {
     adminKpis: {
@@ -150,7 +168,8 @@ export const loadAdminDashboardData = async () => {
       errorRate
     },
     adminTopSellers: topSellers,
-    adminHealth: health
+    adminHealth: health,
+    adminQueueHealth: queueHealth
   };
 };
 

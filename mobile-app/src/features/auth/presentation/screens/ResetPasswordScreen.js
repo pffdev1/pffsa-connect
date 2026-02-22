@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Button, HelperText, TextInput } from 'react-native-paper';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Linking from 'expo-linking';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { supabase } from '../../../../shared/infrastructure/supabaseClient';
+import { clearLocalSupabaseSession, supabase } from '../../../../shared/infrastructure/supabaseClient';
 import { COLORS } from '../../../../constants/theme';
 
 const resetSchema = z
@@ -23,6 +23,20 @@ const resetSchema = z
       });
     }
   });
+
+const AUTH_TIMEOUT_MS = 12000;
+const timeoutError = () => {
+  const error = new Error('AUTH_TIMEOUT');
+  error.code = 'AUTH_TIMEOUT';
+  return error;
+};
+const withTimeout = (promise, ms = AUTH_TIMEOUT_MS) =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(timeoutError()), ms);
+    })
+  ]);
 
 const parseAuthTokensFromUrl = (url = '') => {
   if (!url) return {};
@@ -100,20 +114,24 @@ export default function ResetPasswordScreen() {
       if (type && type !== 'recovery') return false;
 
       if (code) {
-        const { error } = await supabase.auth.exchangeCodeForSession(code);
+        const { error } = await withTimeout(supabase.auth.exchangeCodeForSession(code));
         return !error;
       }
 
       if (tokenHash) {
-        const { error } = await supabase.auth.verifyOtp({
-          token_hash: tokenHash,
-          type: 'recovery'
-        });
+        const { error } = await withTimeout(
+          supabase.auth.verifyOtp({
+            token_hash: tokenHash,
+            type: 'recovery'
+          })
+        );
         return !error;
       }
 
       if (!accessToken || !refreshToken) return false;
-      const { error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+      const { error } = await withTimeout(
+        supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
+      );
       return !error;
     };
 
@@ -131,7 +149,7 @@ export default function ResetPasswordScreen() {
 
         const {
           data: { session }
-        } = await supabase.auth.getSession();
+        } = await withTimeout(supabase.auth.getSession());
 
         if (!mounted) return;
         setCanReset(Boolean(session) || fromInitial || fromParamUrl || fromRouteParams);
@@ -147,11 +165,21 @@ export default function ResetPasswordScreen() {
 
     const subscription = Linking.addEventListener('url', async ({ url }) => {
       const ok = await trySetSessionFromUrl(url);
-      if (ok) setCanReset(true);
+      if (!mounted) return;
+      if (ok) {
+        setCanReset(true);
+      }
+      setVerifying(false);
     });
+
+    const verificationFallbackTimer = setTimeout(() => {
+      if (!mounted) return;
+      setVerifying(false);
+    }, AUTH_TIMEOUT_MS + 1000);
 
     return () => {
       mounted = false;
+      clearTimeout(verificationFallbackTimer);
       subscription?.remove?.();
     };
   }, [paramAuthPayload, paramUrl]);
@@ -159,13 +187,18 @@ export default function ResetPasswordScreen() {
   const handleResetPassword = handleSubmit(async ({ newPassword }) => {
     try {
       setSaving(true);
-      const { error } = await supabase.auth.updateUser({ password: newPassword.trim() });
+      const { error } = await withTimeout(supabase.auth.updateUser({ password: newPassword.trim() }));
       if (error) throw error;
 
-      alert('Tu contrasena fue actualizada correctamente.');
-      router.replace('/login?refresh=1');
+      await clearLocalSupabaseSession();
+      Alert.alert('Contrasena actualizada', 'Tu contrasena fue actualizada correctamente.', [
+        {
+          text: 'OK',
+          onPress: () => router.replace({ pathname: '/login', params: { refresh: String(Date.now()) } })
+        }
+      ]);
     } catch (error) {
-      alert(error.message || 'No se pudo actualizar la contrasena.');
+      Alert.alert('Error', error?.message || 'No se pudo actualizar la contrasena.');
     } finally {
       setSaving(false);
     }
