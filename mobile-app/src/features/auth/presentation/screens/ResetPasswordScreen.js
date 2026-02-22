@@ -24,7 +24,7 @@ const resetSchema = z
     }
   });
 
-const AUTH_TIMEOUT_MS = 12000;
+const AUTH_TIMEOUT_MS = 7000;
 const timeoutError = () => {
   const error = new Error('AUTH_TIMEOUT');
   error.code = 'AUTH_TIMEOUT';
@@ -104,6 +104,7 @@ export default function ResetPasswordScreen() {
 
   useEffect(() => {
     let mounted = true;
+    let verificationFallbackTimer = null;
 
     const trySetSessionFromPayload = async (payload = {}) => {
       const accessToken = String(payload?.access_token || '').trim();
@@ -119,13 +120,19 @@ export default function ResetPasswordScreen() {
       }
 
       if (tokenHash) {
-        const { error } = await withTimeout(
+        const verifyResult = await withTimeout(
           supabase.auth.verifyOtp({
             token_hash: tokenHash,
             type: 'recovery'
           })
         );
-        return !error;
+        if (!verifyResult.error) return true;
+        // Some PKCE links may require code exchange fallback.
+        if (tokenHash.startsWith('pkce_')) {
+          const { error } = await withTimeout(supabase.auth.exchangeCodeForSession(tokenHash));
+          return !error;
+        }
+        return false;
       }
 
       if (!accessToken || !refreshToken) return false;
@@ -142,17 +149,25 @@ export default function ResetPasswordScreen() {
 
     const checkSession = async () => {
       try {
-        const initialUrl = await Linking.getInitialURL();
-        const fromInitial = await trySetSessionFromUrl(initialUrl || '');
-        const fromParamUrl = await trySetSessionFromUrl(paramUrl);
-        const fromRouteParams = await trySetSessionFromPayload(paramAuthPayload);
+        const initialUrl = await Promise.race([
+          Linking.getInitialURL(),
+          new Promise((resolve) => setTimeout(() => resolve(''), AUTH_TIMEOUT_MS))
+        ]);
+
+        const attemptPromises = [
+          trySetSessionFromUrl(String(initialUrl || '')),
+          trySetSessionFromUrl(paramUrl),
+          trySetSessionFromPayload(paramAuthPayload)
+        ];
+        const attemptResults = await Promise.allSettled(attemptPromises);
+        const hasRecoveredSession = attemptResults.some((result) => result.status === 'fulfilled' && result.value);
 
         const {
           data: { session }
         } = await withTimeout(supabase.auth.getSession());
 
         if (!mounted) return;
-        setCanReset(Boolean(session) || fromInitial || fromParamUrl || fromRouteParams);
+        setCanReset(Boolean(session) || hasRecoveredSession);
       } catch (_error) {
         if (!mounted) return;
         setCanReset(false);
@@ -172,7 +187,7 @@ export default function ResetPasswordScreen() {
       setVerifying(false);
     });
 
-    const verificationFallbackTimer = setTimeout(() => {
+    verificationFallbackTimer = setTimeout(() => {
       if (!mounted) return;
       setVerifying(false);
     }, AUTH_TIMEOUT_MS + 1000);

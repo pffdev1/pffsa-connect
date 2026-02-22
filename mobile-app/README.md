@@ -1,6 +1,6 @@
 # PFFSA Connect - Mobile App
 
-Aplicacion movil (Expo/React Native) para gestion de clientes, catalogo y pedidos.
+Aplicación móvil (Expo/React Native) para gestión de clientes, catálogo y pedidos.
 
 ## Requisitos
 
@@ -20,7 +20,7 @@ npm install
 npx expo start
 ```
 
-## Fuente de datos del catalogo
+## Fuente de datos del catálogo
 
 La pantalla `catalogo` consulta la vista `public.vw_catalogo_cliente` en Supabase.
 
@@ -39,7 +39,7 @@ Campos esperados por la app:
 
 La app muestra un solo precio por item, con esta prioridad:
 
-1. Oferta especifica por `CardCode` (`CARDCODE_OFFER`)
+1. Oferta específica por `CardCode` (`CARDCODE_OFFER`)
 2. Oferta por nivel/lista (`LISTNUM_OFFER`)
 3. Precio base (`BASE_PRICE`)
 
@@ -53,4 +53,4 @@ Para evitar inconsistencias, la vista en Supabase debe resolver el precio final 
 2. Si no existe, oferta activa por `ListNum + ItemCode`
 3. Si no existe, `prices.Price`
 
-Esto permite que `catalogo` y `pedido` trabajen con un precio final unico y consistente.
+Esto permite que `catalogo` y `pedido` trabajen con un precio final único y consistente.

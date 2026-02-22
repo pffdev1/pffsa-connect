@@ -7,9 +7,14 @@ Esta fase deja la app lista para notificaciones push nativas:
 - obtiene `ExpoPushToken`
 - guarda token en `public.user_push_tokens`
 
-## 1) Ejecutar SQL base
+## 1) SQL base (opcional)
 
-Ejecuta `mobile-app/docs/push_phase1.sql` en Supabase SQL Editor.
+No existe `mobile-app/docs/push_phase1.sql` en este repositorio.
+
+La app intenta guardar tokens en `public.user_push_tokens` y, si esa tabla no existe,
+hace fallback a `profiles.expo_push_token` (ver `src/shared/infrastructure/notificationsService.js`).
+
+Si ya tienes `user_push_tokens` en tu esquema, no necesitas cambios adicionales aqui.
 
 ## 2) Instalar dependencias (app)
 

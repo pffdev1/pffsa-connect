@@ -5,6 +5,25 @@ export const fetchAuthUser = async () => supabase.auth.getUser();
 export const fetchProfile = async (userId) =>
   supabase.from('profiles').select('full_name, role').eq('id', userId).maybeSingle();
 
+const applyOrderOwnerFilter = (query, { select = '', ownerId = '' } = {}) => {
+  const safeOwnerId = String(ownerId || '').trim();
+  if (!safeOwnerId) return query;
+
+  const hasCreatedBy = String(select).includes('created_by');
+  const hasSellerId = String(select).includes('seller_id');
+
+  if (hasCreatedBy && hasSellerId) {
+    return query.or(`created_by.eq.${safeOwnerId},seller_id.eq.${safeOwnerId}`);
+  }
+  if (hasCreatedBy) {
+    return query.eq('created_by', safeOwnerId);
+  }
+  if (hasSellerId) {
+    return query.eq('seller_id', safeOwnerId);
+  }
+  return query;
+};
+
 export const fetchOrdersInRange = async ({ fromIso, toIso, createdBy = '', limit = 80 } = {}) => {
   const attempts = [
     'id, card_code, created_by, seller_id, status, sap_docnum, created_at, doc_due_date',
@@ -21,9 +40,7 @@ export const fetchOrdersInRange = async ({ fromIso, toIso, createdBy = '', limit
       .order('created_at', { ascending: false })
       .limit(limit);
 
-    if (createdBy) {
-      query = query.eq('created_by', createdBy);
-    }
+    query = applyOrderOwnerFilter(query, { select, ownerId: createdBy });
     const result = await query;
     if (!result.error) return result;
   }
@@ -41,9 +58,7 @@ export const fetchAllOrders = async ({ createdBy = '' } = {}) => {
   ];
   for (const select of attempts) {
     let query = supabase.from('sales_orders').select(select).order('created_at', { ascending: false });
-    if (createdBy) {
-      query = query.eq('created_by', createdBy);
-    }
+    query = applyOrderOwnerFilter(query, { select, ownerId: createdBy });
     const result = await query;
     if (!result.error) return result;
   }
