@@ -61,6 +61,9 @@ export default function Login() {
           Alert.alert('Actualizacion requerida', result.message);
           return;
         }
+        if (result.code === 'INVALID_REFRESH_TOKEN') {
+          return;
+        }
         if (result.code === 'ACCOUNT_DISABLED' || result.code === 'ROLE_NOT_ALLOWED') {
           Alert.alert('Acceso restringido', 'Tu usuario no tiene acceso activo a esta aplicacion.');
         }

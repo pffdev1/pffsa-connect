@@ -1,4 +1,4 @@
-import { clearLocalSupabaseSession, supabase } from '../../../shared/infrastructure/supabaseClient';
+import { clearLocalSupabaseSession, isInvalidRefreshTokenError, supabase } from '../../../shared/infrastructure/supabaseClient';
 import Constants from 'expo-constants';
 import { assertProfileAccess } from '../domain/authPolicy';
 import { logLoginEvent } from '../infrastructure/authAuditRepository';
@@ -105,6 +105,10 @@ export const restoreSessionAccess = async () => {
 
     return { ok: true };
   } catch (error) {
+    if (isInvalidRefreshTokenError(error)) {
+      await clearLocalSupabaseSession();
+      return { ok: false, code: 'INVALID_REFRESH_TOKEN' };
+    }
     const code = String(error?.code || '').trim();
     if (code === 'ACCOUNT_DISABLED' || code === 'ROLE_NOT_ALLOWED') {
       await clearLocalSupabaseSession();
