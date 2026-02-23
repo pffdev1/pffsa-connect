@@ -1,7 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Alert, View, Text, StyleSheet, Image, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import * as Linking from 'expo-linking';
 import { Button, HelperText, TextInput } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -12,7 +11,6 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { COLORS } from '../../../../constants/theme';
 import { login, restoreSessionAccess } from '../../application/loginUseCase';
-import { sendRecoveryLink } from '../../application/sendRecoveryLinkUseCase';
 
 const PRIMARY_LOGO = require('../../../../../assets/logo.png');
 const FALLBACK_LOGO = require('../../../../../assets/mainlogo.png');
@@ -33,22 +31,12 @@ const loginSchema = z.object({
 export default function Login() {
   const router = useRouter();
   const { refresh } = useLocalSearchParams();
-  const resetRedirectTo = useMemo(() => {
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.href) {
-    const baseUrl = new URL('.', window.location.href);
-    return new URL('reset-password', baseUrl).toString();
-  }
-
-  return Linking.createURL('reset-password', { scheme: 'pffsa-connect' });
-}, []);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [sendingReset, setSendingReset] = useState(false);
   const [useFallbackLogo, setUseFallbackLogo] = useState(false);
   const {
     control,
     handleSubmit,
-    getValues,
     formState: { errors }
   } = useForm({
     resolver: zodResolver(loginSchema),
@@ -143,34 +131,6 @@ export default function Login() {
       setLoading(false);
     }
   });
-
-  const handleForgotPassword = async () => {
-    try {
-      setSendingReset(true);
-      const result = await sendRecoveryLink(getValues('email'), resetRedirectTo);
-      if (!result.ok) {
-        if (result.code === 'EMAIL_REQUIRED') {
-          Alert.alert('Correo requerido', 'Ingresa tu correo para enviar el enlace de recuperacion.');
-          return;
-        }
-        if (result.code === 'INVALID_DOMAIN') {
-          Alert.alert('Dominio no permitido', 'Solo se permite recuperacion con correos @pffsa.com.');
-          return;
-        }
-        if (result.code === 'CONNECTION_ERROR') {
-          Alert.alert('Sin conexion', 'No se pudo enviar el enlace por problemas de red.');
-          return;
-        }
-        Alert.alert('Error', result.message || 'No se pudo enviar el enlace de recuperacion.');
-        return;
-      }
-      Alert.alert('Enlace enviado', 'Te enviamos un enlace para restablecer tu contrasena.');
-    } catch (_error) {
-      Alert.alert('Error', 'No se pudo enviar el enlace de recuperacion.');
-    } finally {
-      setSendingReset(false);
-    }
-  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -271,17 +231,6 @@ export default function Login() {
                 {loading ? 'ACCEDIENDO...' : 'ENTRAR'}
               </Button>
 
-              <Button
-                mode="outlined"
-                onPress={handleForgotPassword}
-                disabled={sendingReset}
-                style={styles.forgotButton}
-                contentStyle={styles.forgotButtonContent}
-                labelStyle={styles.forgotText}
-                textColor={COLORS.primary}
-              >
-                {sendingReset ? 'ENVIANDO ENLACE...' : 'Has olvidado tu contrasena?'}
-              </Button>
             </View>
 
             <View style={styles.footer}>
@@ -355,15 +304,6 @@ const styles = StyleSheet.create({
   },
   loginButtonContent: { height: 48 },
   loginButtonLabel: { color: '#FFF', fontWeight: 'bold', fontSize: 16, letterSpacing: 0.3 },
-  forgotButton: {
-    marginTop: 14,
-    alignSelf: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.primary,
-    borderRadius: 999
-  },
-  forgotButtonContent: { paddingHorizontal: 6 },
-  forgotText: { color: COLORS.primary, fontSize: 13, fontWeight: '600' },
   footer: { marginTop: 22, alignItems: 'center' },
   footerMain: { color: COLORS.textLight, fontSize: 12, fontWeight: 'bold' },
   footerSub: { color: COLORS.textLight, fontSize: 10, marginTop: 4 }

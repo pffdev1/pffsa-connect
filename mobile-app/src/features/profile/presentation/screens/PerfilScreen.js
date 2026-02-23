@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, FlatList, Modal, Pressable } from 'react-native';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
-import * as Linking from 'expo-linking';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Controller, useForm } from 'react-hook-form';
@@ -74,7 +73,6 @@ export default function Perfil() {
   const [adminTab, setAdminTab] = useState('pedidos');
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminError, setAdminError] = useState('');
-  const [adminResettingSellerId, setAdminResettingSellerId] = useState('');
   const [sellerRows, setSellerRows] = useState([]);
   const [sellerSearch, setSellerSearch] = useState('');
   const [showAllSellers, setShowAllSellers] = useState(false);
@@ -115,15 +113,6 @@ export default function Perfil() {
     resolver: zodResolver(passwordSchema),
     defaultValues: { newPassword: '', confirmPassword: '' }
   });
-  const resetRedirectTo = useMemo(() => {
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    return `${window.location.origin}/reset-password`;
-  }
-
-  return Linking.createURL('reset-password', {
-    scheme: 'pffsa-connect'
-  });
-}, []);
   const perfilScreenOptions = useMemo(() => ({ headerShown: false }), []);
 
   useEffect(() => {
@@ -657,26 +646,6 @@ export default function Perfil() {
     }
   });
 
-  const handleSendSellerReset = async (seller) => {
-    try {
-      setAdminResettingSellerId(seller.id);
-      const email = String(seller?.email || '').trim().toLowerCase();
-      if (!email) {
-        throw new Error('Este vendedor no tiene correo en profiles.email para enviar cambio de clave.');
-      }
-
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: resetRedirectTo
-      });
-      if (error) throw error;
-      alert(`Se envio enlace de cambio de clave a ${email}.`);
-    } catch (error) {
-      alert(error.message || 'No se pudo enviar el enlace de cambio de clave.');
-    } finally {
-      setAdminResettingSellerId('');
-    }
-  };
-
   const loadSellerOrders = useCallback(async (sellerId) => {
     if (!sellerId) return;
 
@@ -995,7 +964,6 @@ export default function Perfil() {
           ) : (
             <View style={styles.adminListWrap}>
               {visibleSellerRows.map((seller) => {
-                const isResetting = adminResettingSellerId === seller.id;
                 return (
                   <Pressable key={seller.id} onPress={() => handleOpenSellerOrders(seller)}>
                     <Surface style={styles.sellerCard} elevation={1}>
@@ -1019,19 +987,6 @@ export default function Perfil() {
                       </View>
 
                       <Text style={styles.sellerLastSeen}>Ultimo pedido: {formatDateTime(seller.lastSeen)}</Text>
-
-                      <View style={styles.sellerActions}>
-                        <Button
-                          mode="outlined"
-                          icon="lock-reset"
-                          loading={isResetting}
-                          disabled={isResetting}
-                          style={styles.sellerResetButton}
-                          onPress={() => handleSendSellerReset(seller)}
-                        >
-                          Cambiar clave
-                        </Button>
-                      </View>
                     </Surface>
                   </Pressable>
                 );
@@ -1433,9 +1388,6 @@ const styles = StyleSheet.create({
   metricLabel: { color: COLORS.textLight, fontSize: 11, fontWeight: '600' },
   metricValue: { color: COLORS.primary, fontSize: 13, fontWeight: '800', marginTop: 2 },
   sellerLastSeen: { marginTop: 10, color: COLORS.textLight, fontSize: 11 },
-  sellerActions: { marginTop: 10 },
-  sellerResetButton: { alignSelf: 'stretch' },
-
   adminSkeletonCard: {
     borderWidth: 1,
     borderColor: '#EEF1F4',

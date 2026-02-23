@@ -32,11 +32,11 @@ Payload Expo:
 {
   "to": "ExponentPushToken[xxxx]",
   "sound": "default",
-  "title": "Pedido actualizado",
-  "body": "Tu pedido SAP #12345 fue enviado",
+  "title": "Cliente desbloqueado",
+  "body": "Cliente ABC (C0001) ya esta habilitado",
   "data": {
-    "type": "order_status",
-    "order_id": "..."
+    "type": "customer_unlock",
+    "card_code": "C0001"
   }
 }
 ```
@@ -51,7 +51,15 @@ Headers:
 
 ## 4) Flujo recomendado
 
-1. Trigger/worker detecta evento (ej. `sales_orders.status` cambia).
-2. Consulta `user_push_tokens` del usuario destino.
+1. Trigger/worker detecta evento (ej. `customers.Bloqueado` cambia `Y -> N`).
+2. Consulta `user_push_tokens` (y fallback `profiles.expo_push_token`).
 3. Envia notificacion a cada token.
 4. Registra respuesta para limpiar tokens invalidos.
+
+## Implementacion en este repo
+
+Para el flujo actual (clientes desbloqueados), revisa:
+
+- `mobile-app/scripts/supabase-push-customer-unlock.sql`
+- `supabase/functions/push-customer-unlock/index.ts`
+- `docs/push-setup.md`

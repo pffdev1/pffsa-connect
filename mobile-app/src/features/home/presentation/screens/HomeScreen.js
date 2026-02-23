@@ -276,36 +276,46 @@ export default function HomeScreen() {
     let channel;
     let active = true;
     const setupRealtime = async () => {
-      const {
-        data: { user }
-      } = await supabase.auth.getUser();
-      if (!active || !user?.id) return;
-      const isAdminRole = profileRole === 'admin';
-      const channelName = isAdminRole ? `home-orders-admin-${user.id}` : `home-orders-${user.id}`;
-      const realtimeFilter = isAdminRole ? { event: '*', schema: 'public', table: 'sales_orders' } : {
-        event: '*',
-        schema: 'public',
-        table: 'sales_orders',
-        filter: `created_by=eq.${user.id}`
-      };
-      channel = supabase
-        .channel(channelName)
-        .on(
-          'postgres_changes',
-          realtimeFilter,
-          () => {
-            setLastRealtimeEventAt(new Date().toLocaleTimeString('es-PA', { hour: '2-digit', minute: '2-digit' }));
-            loadHome({ showLoader: false });
-          }
-        )
-        .subscribe((status) => setRealtimeStatus(status));
+      try {
+        const {
+          data: { user }
+        } = await supabase.auth.getUser();
+        if (!active || !user?.id) return;
+        const isAdminRole = profileRole === 'admin';
+        const channelName = isAdminRole ? `home-orders-admin-${user.id}` : `home-orders-${user.id}`;
+        const realtimeFilter = isAdminRole ? { event: '*', schema: 'public', table: 'sales_orders' } : {
+          event: '*',
+          schema: 'public',
+          table: 'sales_orders',
+          filter: `created_by=eq.${user.id}`
+        };
+        channel = supabase
+          .channel(channelName)
+          .on(
+            'postgres_changes',
+            realtimeFilter,
+            () => {
+              setLastRealtimeEventAt(new Date().toLocaleTimeString('es-PA', { hour: '2-digit', minute: '2-digit' }));
+              loadHome({ showLoader: false });
+            }
+          )
+          .subscribe((status) => setRealtimeStatus(status));
+      } catch (error) {
+        if (!active) return;
+        if (isInvalidRefreshTokenError(error)) {
+          await clearLocalSupabaseSession();
+          router.replace({ pathname: '/login', params: { refresh: String(Date.now()) } });
+          return;
+        }
+        setRealtimeStatus('CHANNEL_ERROR');
+      }
     };
     setupRealtime();
     return () => {
       active = false;
       if (channel) supabase.removeChannel(channel);
     };
-  }, [loadHome, profileRole]);
+  }, [loadHome, profileRole, router]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
