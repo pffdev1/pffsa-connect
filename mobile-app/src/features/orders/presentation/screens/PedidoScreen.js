@@ -92,6 +92,7 @@ export default function Pedido() {
   const swipeHintPlayedRef = useRef(false);
   const suppressSwipeDeleteRef = useRef(false);
   const sharePressAnim = useRef(new Animated.Value(1)).current;
+  const CheckoutKeyboardContainer = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
   const cartCardCodes = useMemo(
     () => Array.from(new Set(cart.map((item) => String(item?.CardCode || '').trim()).filter(Boolean))),
     [cart]
@@ -903,13 +904,12 @@ export default function Pedido() {
             setShowDatePicker(false);
           }}
         >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'position'}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
+          <CheckoutKeyboardContainer
+            {...(Platform.OS === 'ios' ? { behavior: 'padding', keyboardVerticalOffset: 24 } : {})}
             style={styles.checkoutKeyboardWrap}
-            contentContainerStyle={styles.checkoutKeyboardContent}
           >
-            <Pressable style={styles.checkoutPanel} onPress={(event) => event.stopPropagation()}>
+            <View style={styles.checkoutKeyboardContent}>
+              <Pressable style={styles.checkoutPanel} onPress={(event) => event.stopPropagation()}>
               <Text style={styles.checkoutTitle}>Datos de entrega</Text>
               <Text style={styles.checkoutLabel}>Fecha de entrega</Text>
               {Platform.OS === 'web' ? (
@@ -1007,8 +1007,9 @@ export default function Pedido() {
                   ENVIAR
                 </Button>
               </View>
-            </Pressable>
-          </KeyboardAvoidingView>
+              </Pressable>
+            </View>
+          </CheckoutKeyboardContainer>
         </Pressable>
       </Modal>
     </SafeAreaView>

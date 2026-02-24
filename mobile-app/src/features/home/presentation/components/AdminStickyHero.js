@@ -12,6 +12,7 @@ export default function AdminStickyHero({
   unreadUnlockCount,
   openNotifications,
   handleLogout,
+  loggingOut = false,
   styles
 }) {
   return (
@@ -25,7 +26,16 @@ export default function AdminStickyHero({
             <View />
             <View style={styles.heroActions}>
               <NotificationBellButton unreadUnlockCount={unreadUnlockCount} openNotifications={openNotifications} styles={styles} />
-              <Button mode="contained" compact icon="logout" onPress={handleLogout} buttonColor="#FFFFFF" textColor={COLORS.primary}>
+              <Button
+                mode="contained"
+                compact
+                icon="logout"
+                onPress={handleLogout}
+                loading={loggingOut}
+                disabled={loggingOut}
+                buttonColor="#FFFFFF"
+                textColor={COLORS.primary}
+              >
                 Salir
               </Button>
             </View>

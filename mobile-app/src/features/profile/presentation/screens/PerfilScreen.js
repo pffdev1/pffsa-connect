@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, FlatList, Modal, Pressable } from 'react-native';
+import { Alert, View, Text, StyleSheet, ScrollView, RefreshControl, FlatList, Modal, Pressable } from 'react-native';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -666,7 +666,19 @@ export default function Perfil() {
       if (error) throw error;
 
       reset({ newPassword: '', confirmPassword: '' });
-      alert('Contrasena actualizada correctamente.');
+      await clearLocalSupabaseSession();
+      Alert.alert(
+        'Contrasena actualizada',
+        'Tu contrasena fue cambiada exitosamente. Debes iniciar sesion nuevamente con tu nueva contrasena.',
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              routerRef.current?.replace?.({ pathname: '/login', params: { refresh: String(Date.now()) } });
+            }
+          }
+        ]
+      );
     } catch (error) {
       alert(error.message || 'No se pudo actualizar la contrasena.');
     } finally {

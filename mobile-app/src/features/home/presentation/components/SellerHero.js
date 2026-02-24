@@ -7,7 +7,7 @@ import { Image } from 'expo-image';
 import { COLORS, GLOBAL_STYLES } from '../../../../constants/theme';
 import NotificationBellButton from './NotificationBellButton';
 
-export default function SellerHero({ fullName, handleLogout, unreadUnlockCount, openNotifications, styles }) {
+export default function SellerHero({ fullName, handleLogout, unreadUnlockCount, openNotifications, loggingOut = false, styles }) {
   return (
     <View>
       <View style={styles.topBrandBar}>
@@ -18,7 +18,16 @@ export default function SellerHero({ fullName, handleLogout, unreadUnlockCount, 
           <Text style={styles.heroEyebrow}>Panel vendedor</Text>
           <View style={styles.heroActions}>
             <NotificationBellButton unreadUnlockCount={unreadUnlockCount} openNotifications={openNotifications} styles={styles} />
-            <Button mode="contained" compact icon="logout" onPress={handleLogout} buttonColor="#FFFFFF" textColor={COLORS.primary}>
+            <Button
+              mode="contained"
+              compact
+              icon="logout"
+              onPress={handleLogout}
+              loading={loggingOut}
+              disabled={loggingOut}
+              buttonColor="#FFFFFF"
+              textColor={COLORS.primary}
+            >
               Salir
             </Button>
           </View>

@@ -32,6 +32,7 @@ import SalesSummaryModal from '../components/SalesSummaryModal';
 import ErrorOrdersModal from '../components/ErrorOrdersModal';
 const MAX_UNLOCK_NOTIFICATIONS = 30;
 const NOTIFICATION_DEDUPE_WINDOW_MS = 2 * 60 * 1000;
+const LOGOUT_TIMEOUT_MS = 5000;
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -79,6 +80,7 @@ export default function HomeScreen() {
   });
   const [unlockNotifications, setUnlockNotifications] = useState([]);
   const [notificationsVisible, setNotificationsVisible] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const unlockNotificationIndexRef = useRef(new Map());
   const hasHydratedNotificationsRef = useRef(false);
   const unreadUnlockCount = useMemo(() => unlockNotifications.filter((item) => !item.read).length, [unlockNotifications]);
@@ -326,10 +328,24 @@ export default function HomeScreen() {
   }, [loadHome]);
 
   const handleLogout = useCallback(async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) return;
-    router.replace({ pathname: '/login', params: { refresh: String(Date.now()) } });
-  }, [router]);
+    if (loggingOut) return;
+    setLoggingOut(true);
+
+    try {
+      await Promise.race([
+        supabase.auth.signOut(),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('LOGOUT_TIMEOUT')), LOGOUT_TIMEOUT_MS);
+        })
+      ]);
+    } catch (_error) {
+      // Continue with local cleanup even if remote sign out fails or times out.
+    } finally {
+      await clearLocalSupabaseSession();
+      router.replace({ pathname: '/login', params: { refresh: String(Date.now()) } });
+      setLoggingOut(false);
+    }
+  }, [loggingOut, router]);
 
   const loadOrdersTodayDetails = useCallback(async () => {
     if (!authUserId) return;
@@ -415,6 +431,7 @@ export default function HomeScreen() {
             unreadUnlockCount={unreadUnlockCount}
             openNotifications={openNotifications}
             handleLogout={handleLogout}
+            loggingOut={loggingOut}
             styles={styles}
           />
         )}
@@ -426,6 +443,7 @@ export default function HomeScreen() {
                 handleLogout={handleLogout}
                 unreadUnlockCount={unreadUnlockCount}
                 openNotifications={openNotifications}
+                loggingOut={loggingOut}
                 styles={styles}
               />
             </Animated.View>
