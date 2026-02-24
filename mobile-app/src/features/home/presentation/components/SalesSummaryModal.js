@@ -26,7 +26,7 @@ export default function SalesSummaryModal({
             <Text style={styles.modalEmpty}>Calculando...</Text>
           ) : (
             <View style={styles.salesSummaryWrap}>
-              <Text style={styles.salesSummaryLabel}>Todos tus pedidos</Text>
+              <Text style={styles.salesSummaryLabel}>Cantidad de pedidos</Text>
               <Text style={styles.salesSummaryOrders}>{allOrdersCount}</Text>
               <Text style={styles.salesSummaryLabel}>Total de ventas</Text>
               <Text style={styles.salesSummaryValue}>{toMoney(allSalesTotal)}</Text>

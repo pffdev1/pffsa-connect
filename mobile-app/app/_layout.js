@@ -16,6 +16,7 @@ import { flushPendingOrders } from '../src/shared/infrastructure/offlineService'
 export default function RootLayout() {
   useEffect(() => {
     let active = true;
+
     configureNotificationsAsync().catch(() => {});
 
     const removeNotificationListeners = bindNotificationListeners();

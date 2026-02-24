@@ -4,8 +4,8 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
-import { supabase } from '../../../../shared/infrastructure/supabaseClient';
 import { INTRO_BAR_SPECS, INTRO_MIN_VISIBLE_MS } from '../../domain/introMotion';
+import { restoreSessionAccess } from '../../application/loginUseCase';
 
 function AnimatedBrandBar({ height, delay, color }) {
   const progress = useSharedValue(0.4);
@@ -35,48 +35,71 @@ function AnimatedBrandBar({ height, delay, color }) {
 export default function PedersenBarsSplash() {
   const router = useRouter();
   const [statusText, setStatusText] = useState('Inicializando entorno...');
-
-  useEffect(() => {
-    const statusSteps = ['Inicializando entorno...', 'Validando sesion...', 'Preparando experiencia...'];
-    let index = 0;
-    const intervalId = setInterval(() => {
-      index = (index + 1) % statusSteps.length;
-      setStatusText(statusSteps[index]);
-    }, 420);
-
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, []);
+  const [statusDetail, setStatusDetail] = useState('Preparando configuracion de la aplicacion.');
 
   useEffect(() => {
     let cancelled = false;
+    let hasNavigated = false;
+    const BOOT_TIMEOUT_MS = 4500;
+    const withTimeout = (promise, ms = BOOT_TIMEOUT_MS) =>
+      Promise.race([
+        promise,
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('INTRO_BOOT_TIMEOUT')), ms);
+        })
+      ]);
 
     const boot = async () => {
       const startedAt = Date.now();
-      let hasSession = false;
+      setStatusText('Validando sesion...');
+      setStatusDetail('Consultando sesion local y permisos de acceso.');
 
       try {
-        const {
-          data: { session }
-        } = await supabase.auth.getSession();
-        hasSession = Boolean(session?.user);
-        setStatusText(hasSession ? 'Sesion activa detectada...' : 'Redirigiendo al acceso...');
+        const result = await withTimeout(restoreSessionAccess());
+        if (cancelled || hasNavigated) return;
+
+        if (result?.ok) {
+          setStatusText('Sesion activa detectada...');
+          setStatusDetail('Perfil y version validados. Entrando al panel...');
+          const elapsedMs = Date.now() - startedAt;
+          const pendingMs = Math.max(INTRO_MIN_VISIBLE_MS - elapsedMs, 0);
+          if (pendingMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, pendingMs));
+          }
+          if (cancelled || hasNavigated) return;
+          hasNavigated = true;
+          router.replace('/(tabs)/home');
+          return;
+        }
+        if (result?.code === 'VERSION_BLOCKED') {
+          setStatusText('Actualizacion requerida');
+          setStatusDetail('Se requiere una version mas reciente para continuar.');
+        } else if (result?.code === 'NO_SESSION' || result?.code === 'INVALID_REFRESH_TOKEN') {
+          setStatusText('Sesion no valida');
+          setStatusDetail('No hay sesion activa. Redirigiendo al acceso.');
+        } else if (result?.code === 'ACCOUNT_DISABLED' || result?.code === 'ROLE_NOT_ALLOWED') {
+          setStatusText('Acceso restringido');
+          setStatusDetail('Tu usuario no tiene acceso activo en este entorno.');
+        } else {
+          setStatusText('Sin sesion activa');
+          setStatusDetail('Redirigiendo al acceso...');
+        }
       } catch (_error) {
-        hasSession = false;
-        setStatusText('Redirigiendo al acceso...');
+        setStatusText('Validacion expirada');
+        setStatusDetail('La comprobacion tardo demasiado. Redirigiendo al acceso.');
       }
 
+      if (cancelled || hasNavigated) return;
+      setStatusText('Redirigiendo al acceso...');
+      setStatusDetail('Abriendo formulario de inicio de sesion.');
       const elapsedMs = Date.now() - startedAt;
       const pendingMs = Math.max(INTRO_MIN_VISIBLE_MS - elapsedMs, 0);
       if (pendingMs > 0) {
-        await new Promise((resolve) => {
-          setTimeout(resolve, pendingMs);
-        });
+        await new Promise((resolve) => setTimeout(resolve, pendingMs));
       }
-
-      if (cancelled) return;
-      router.replace(hasSession ? '/(tabs)/home' : '/login');
+      if (cancelled || hasNavigated) return;
+      hasNavigated = true;
+      router.replace('/login');
     };
 
     boot();
@@ -101,6 +124,7 @@ export default function PedersenBarsSplash() {
 
         <Text style={styles.title}>Pedersen Fine Foods</Text>
         <Text style={styles.subtitle}>{statusText}</Text>
+        <Text style={styles.statusDetail}>{statusDetail}</Text>
       </LinearGradient>
     </SafeAreaView>
   );
@@ -169,6 +193,13 @@ const styles = StyleSheet.create({
     color: '#DBEFFF',
     fontSize: 13,
     fontWeight: '600',
+    textAlign: 'center'
+  },
+  statusDetail: {
+    marginTop: 6,
+    color: '#BFD9F5',
+    fontSize: 11,
+    fontWeight: '500',
     textAlign: 'center'
   }
 });

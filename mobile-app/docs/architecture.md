@@ -67,11 +67,11 @@ src/
 ## Actualizaciones recientes (alineadas a esta arquitectura)
 
 - `auth`:
-  - Intro previa a login implementada como componente de presentacion de feature:
+  - Intro previa a login consolidada en un solo componente de presentacion:
     - `src/features/auth/presentation/components/PedersenBarsSplash.js`
   - Tokens de animacion/tiempos aislados en dominio:
     - `src/features/auth/domain/introMotion.js`
-  - `IntroScreen` queda como wrapper de pantalla de feature.
+  - `IntroScreen` eliminado para evitar doble capa; `app/index.js` apunta directo al splash interactivo.
 - `home`:
   - Separacion de panel vendedor vs panel admin en componentes independientes.
   - KPI, salud operativa y modales de detalle desacoplados por componentes.
@@ -84,6 +84,23 @@ src/
     - `src/shared/config/heroTokens.js`
   - Infraestructura compartida consolidada en:
     - `src/shared/infrastructure/*`
+
+## Release 1.0.1 (documentado)
+
+- `auth/session`:
+  - Manejo defensivo de refresh token invalido en `src/shared/infrastructure/supabaseClient.js`.
+  - `RootLayout` mantenido para listeners/sync (notificaciones y flush offline), sin puerta de autenticacion.
+  - Validacion de sesion centralizada al arranque en `PedersenBarsSplash`.
+  - Mensajes de estado de bootstrap visibles para usuario (sesion, acceso, redireccion).
+- `home/admin`:
+  - Tarjeta de ventas admin ahora muestra ventas totales (global), no solo del dia.
+  - Formato compacto para montos grandes (ej. `$10.1k`).
+  - Modal de resumen cambia texto a `Cantidad de pedidos`.
+- `profile/vendedor`:
+  - Seccion de pedidos limitada a los ultimos 30 dias.
+  - Paginacion `CARGAR MAS` preservada dentro del rango de 30 dias.
+- `ux/splash`:
+  - `expo-splash-screen` alineado visualmente a identidad Pedersen (fondo/logo) para continuidad con splash interactivo.
 
 ## Criterio obligatorio para cambios futuros
 

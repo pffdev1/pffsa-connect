@@ -10,7 +10,7 @@ import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { COLORS } from '../../../../constants/theme';
-import { login, restoreSessionAccess } from '../../application/loginUseCase';
+import { login } from '../../application/loginUseCase';
 
 const PRIMARY_LOGO = require('../../../../../assets/logo.png');
 const FALLBACK_LOGO = require('../../../../../assets/mainlogo.png');
@@ -46,37 +46,6 @@ export default function Login() {
   useEffect(() => {
     setUseFallbackLogo(false);
   }, [refresh]);
-
-  useEffect(() => {
-    let mounted = true;
-    const restoreSession = async () => {
-      try {
-        const result = await restoreSessionAccess();
-        if (!mounted) return;
-        if (result.ok) {
-          router.replace('/(tabs)/home');
-          return;
-        }
-        if (result.code === 'VERSION_BLOCKED') {
-          Alert.alert('Actualizacion requerida', result.message);
-          return;
-        }
-        if (result.code === 'INVALID_REFRESH_TOKEN') {
-          return;
-        }
-        if (result.code === 'ACCOUNT_DISABLED' || result.code === 'ROLE_NOT_ALLOWED') {
-          Alert.alert('Acceso restringido', 'Tu usuario no tiene acceso activo a esta aplicacion.');
-        }
-      } catch (_error) {
-        // Silent: keep login form visible if restore flow fails.
-      }
-    };
-
-    restoreSession();
-    return () => {
-      mounted = false;
-    };
-  }, [router]);
 
   const handleLogin = handleSubmit(async ({ email, password }) => {
     try {

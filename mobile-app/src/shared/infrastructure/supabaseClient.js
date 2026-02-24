@@ -33,7 +33,14 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 
 export const isInvalidRefreshTokenError = (error) => {
   const raw = `${error?.message || ''} ${error?.name || ''} ${error?.code || ''}`.toLowerCase();
-  return raw.includes('invalid refresh token') || raw.includes('refresh token not found');
+  return (
+    raw.includes('invalid refresh token') ||
+    raw.includes('refresh token not found') ||
+    raw.includes('refresh_token_not_found') ||
+    raw.includes('invalid_grant') ||
+    raw.includes('session not found') ||
+    raw.includes('jwt expired')
+  );
 };
 
 export const clearLocalSupabaseSession = async () => {

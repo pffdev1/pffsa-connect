@@ -21,6 +21,14 @@ export default function AdminDashboardSection({
   const errorRate = Number(adminKpis?.errorRate || 0);
   const errorRateTone = errorRate >= 10 ? 'danger' : errorRate >= 3 ? 'warn' : 'success';
   const errorRateToneText = errorRateTone === 'danger' ? 'Alta' : errorRateTone === 'warn' ? 'Media' : 'Baja';
+  const formatCompactMoney = (value) => {
+    const amount = Number(value || 0);
+    if (!Number.isFinite(amount)) return '$0.0k';
+    if (Math.abs(amount) >= 10000) {
+      return `$${(amount / 1000).toFixed(1)}k`;
+    }
+    return toMoney(amount);
+  };
 
   return (
     <>
@@ -37,9 +45,9 @@ export default function AdminDashboardSection({
           <View style={styles.kpiIconWrap}>
             <Ionicons name="cash-outline" size={22} color="#003a78" />
           </View>
-          <Text style={styles.kpiLabel}>Ventas hoy</Text>
-          <Text style={styles.kpiValue}>{loading ? '...' : toMoney(adminKpis.salesToday)}</Text>
-          <Text style={styles.kpiHint}>Global hoy</Text>
+          <Text style={styles.kpiLabel}>Ventas totales</Text>
+          <Text style={styles.kpiValue}>{loading ? '...' : formatCompactMoney(adminKpis.salesGlobalTotal || 0)}</Text>
+          <Text style={styles.kpiHint}>Global total</Text>
         </Pressable>
       </View>
 

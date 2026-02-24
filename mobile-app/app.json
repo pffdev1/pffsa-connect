@@ -2,7 +2,7 @@
   "expo": {
     "name": "Pedersen Connect",
     "slug": "pedersen-connect",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "pffsa-connect",
@@ -35,12 +35,12 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/logo.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#052147",
           "dark": {
-            "backgroundColor": "#000000"
+            "backgroundColor": "#052147"
           }
         }
       ],

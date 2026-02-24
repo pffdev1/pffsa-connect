@@ -57,6 +57,7 @@ export default function HomeScreen() {
   const [adminKpis, setAdminKpis] = useState({
     ordersToday: 0,
     salesToday: 0,
+    salesGlobalTotal: 0,
     activeSellers: 0,
     pendingOrders: 0,
     errorOrders: 0,
@@ -103,6 +104,7 @@ export default function HomeScreen() {
       setAdminKpis({
         ordersToday: 0,
         salesToday: 0,
+        salesGlobalTotal: 0,
         activeSellers: 0,
         pendingOrders: 0,
         errorOrders: 0,

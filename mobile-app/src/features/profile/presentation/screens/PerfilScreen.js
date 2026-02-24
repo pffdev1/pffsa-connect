@@ -39,6 +39,7 @@ const passwordSchema = z
   });
 
 const ORDERS_PAGE_SIZE = 12;
+const ORDERS_LOOKBACK_DAYS = 30;
 const ADMIN_VISIBLE_SELLERS = 5;
 const ORDER_LINES_PREVIEW_LIMIT = 20;
 
@@ -257,10 +258,15 @@ export default function Perfil() {
 
     try {
       setOrdersLoading(true);
+      const lookbackStart = new Date();
+      lookbackStart.setDate(lookbackStart.getDate() - ORDERS_LOOKBACK_DAYS);
+      const lookbackStartIso = lookbackStart.toISOString();
+
       const { data: orders, error: ordersError } = await supabase
         .from('sales_orders')
         .select('id, card_code, status, sap_docnum, created_at, doc_due_date, last_error')
         .eq('created_by', userId)
+        .gte('created_at', lookbackStartIso)
         .order('created_at', { ascending: false })
         .range(0, ORDERS_PAGE_SIZE - 1);
 
@@ -292,11 +298,15 @@ export default function Perfil() {
         setLoadingMoreOrders(true);
         const from = ordersNextFrom;
         const to = from + ORDERS_PAGE_SIZE - 1;
+        const lookbackStart = new Date();
+        lookbackStart.setDate(lookbackStart.getDate() - ORDERS_LOOKBACK_DAYS);
+        const lookbackStartIso = lookbackStart.toISOString();
 
         const { data: orders, error: ordersError } = await supabase
           .from('sales_orders')
           .select('id, card_code, status, sap_docnum, created_at, doc_due_date, last_error')
           .eq('created_by', userId)
+          .gte('created_at', lookbackStartIso)
           .order('created_at', { ascending: false })
           .range(from, to);
 
@@ -759,6 +769,7 @@ export default function Perfil() {
   const renderOrdersSection = (title = 'Mis ultimos pedidos') => (
     <>
       <Text style={styles.sectionTitle}>{title}</Text>
+      <Text style={styles.sectionHint}>Mostrando pedidos de los ultimos {ORDERS_LOOKBACK_DAYS} dias.</Text>
       {ordersLoading ? (
         <View style={styles.ordersList}>
           {Array.from({ length: 4 }).map((_, idx) => (
@@ -770,7 +781,7 @@ export default function Perfil() {
           ))}
         </View>
       ) : recentOrders.length === 0 ? (
-        <Text style={styles.ordersEmpty}>Aun no hay pedidos recientes.</Text>
+        <Text style={styles.ordersEmpty}>Aun no hay pedidos en los ultimos {ORDERS_LOOKBACK_DAYS} dias.</Text>
       ) : (
         <View style={styles.ordersList}>
           {recentOrders.map((order) => {
@@ -843,7 +854,7 @@ export default function Perfil() {
       />
 
       {activeTab === 'pedidos' ? (
-        renderOrdersSection('Mis ultimos pedidos')
+        renderOrdersSection(`Mis pedidos (${ORDERS_LOOKBACK_DAYS} dias)`)
       ) : (
         renderSecurityForm()
       )}
@@ -1276,6 +1287,7 @@ const styles = StyleSheet.create({
   value: { color: COLORS.text, fontSize: 15, fontWeight: '700' },
   tabs: { marginTop: 12, marginBottom: 6 },
   sectionTitle: { marginTop: 12, marginBottom: 8, color: COLORS.primary, fontSize: 15, fontWeight: '700' },
+  sectionHint: { marginBottom: 8, color: COLORS.textLight, fontSize: 12, fontWeight: '600' },
   ordersEmpty: { color: COLORS.textLight, fontSize: 13, marginBottom: 8 },
   ordersList: { marginBottom: 6 },
   orderSkeletonRow: {

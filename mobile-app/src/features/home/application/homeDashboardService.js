@@ -70,6 +70,19 @@ export const loadAdminDashboardData = async () => {
   const filteredTodayOrders = keepTodayOrders(todayOrdersRows || []);
   const todayOrderIds = filteredTodayOrders.map((row) => String(row?.id || '').trim()).filter(Boolean);
   const { data: todayLinesRows } = await fetchLinesByOrderIds(todayOrderIds);
+  let salesGlobalTotal = 0;
+  try {
+    const { data: allOrdersRows, error: allOrdersError } = await fetchAllOrders();
+    if (allOrdersError) throw allOrdersError;
+    const allOrderIds = (allOrdersRows || []).map((row) => String(row?.id || '').trim()).filter(Boolean);
+    if (allOrderIds.length > 0) {
+      const { data: allLinesRows, error: allLinesError } = await fetchLinesByOrderIds(allOrderIds);
+      if (allLinesError) throw allLinesError;
+      salesGlobalTotal = resolveOrderTotal(allLinesRows || []);
+    }
+  } catch (_error) {
+    salesGlobalTotal = 0;
+  }
 
   let sellerRows = [];
   try {
@@ -162,6 +175,7 @@ export const loadAdminDashboardData = async () => {
     adminKpis: {
       ordersToday: filteredTodayOrders.length,
       salesToday: resolveOrderTotal(todayLinesRows || []),
+      salesGlobalTotal,
       activeSellers: summary.activeSellers,
       pendingOrders: summary.pendingOrders,
       errorOrders: summary.errorOrders,
