@@ -204,17 +204,41 @@ Deno.serve(async (req) => {
   let targetTokensTotal = 0;
   let sent = 0;
   let failed = 0;
+  let skippedNoTargetUsers = 0;
+  let skippedNoTargetTokens = 0;
 
   for (const row of rows) {
     try {
       const userIds = await getTargetUserIdsForEvent(row);
+      if (userIds.length === 0) {
+        failed += 1;
+        skippedNoTargetUsers += 1;
+        const retryIn = computeRetryInSeconds(row.attempt_count);
+        await supabase.rpc("mark_customer_unlock_push_event_failed", {
+          p_event_id: row.id,
+          p_error: "NO_TARGET_USERS: no sellers/admins resolved for this event",
+          p_retry_in_seconds: retryIn,
+        });
+        continue;
+      }
+
       const tokens = await getTargetTokensForUserIds(userIds);
+      if (tokens.length === 0) {
+        failed += 1;
+        skippedNoTargetTokens += 1;
+        const retryIn = computeRetryInSeconds(row.attempt_count);
+        await supabase.rpc("mark_customer_unlock_push_event_failed", {
+          p_event_id: row.id,
+          p_error: "NO_TARGET_TOKENS: recipients found but without valid push tokens",
+          p_retry_in_seconds: retryIn,
+        });
+        continue;
+      }
+
       targetTokensTotal += tokens.length;
 
-      if (tokens.length > 0) {
-        for (const token of tokens) {
-          await sendExpoPush(token, row);
-        }
+      for (const token of tokens) {
+        await sendExpoPush(token, row);
       }
       await supabase.rpc("mark_customer_unlock_push_event_sent", { p_event_id: row.id });
       sent += 1;
@@ -235,6 +259,8 @@ Deno.serve(async (req) => {
       processed: rows.length,
       sent,
       failed,
+      skipped_no_target_users: skippedNoTargetUsers,
+      skipped_no_target_tokens: skippedNoTargetTokens,
       target_tokens: targetTokensTotal,
     }),
     { status: 200, headers: jsonHeaders },

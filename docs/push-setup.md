@@ -88,3 +88,8 @@ select count(*) filter (where sent_at is null) as pending,
        count(*) filter (where sent_at is not null) as sent
 from public.customer_unlock_push_events;
 ```
+
+Interpretacion recomendada de `last_attempt_error`:
+
+- `NO_TARGET_USERS`: no se pudo mapear `customers.Vendedor` a `profiles` (role vendedor/admin segun config).
+- `NO_TARGET_TOKENS`: se encontraron destinatarios, pero no tienen token valido en `user_push_tokens`/`profiles.expo_push_token`.
