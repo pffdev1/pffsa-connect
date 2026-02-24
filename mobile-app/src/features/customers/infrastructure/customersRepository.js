@@ -1,7 +1,7 @@
 import { supabase } from '../../../shared/infrastructure/supabaseClient';
 
 const CUSTOMER_SELECT_FIELDS =
-  'CardCode, CardName, CardFName, RUC, DV, Vendedor, Nivel, SubCategoria, TipoCadena, Ruta, Zona, IDRuta, Direccion, DiasEntrega, Horario, Balance, Bloqueado';
+  'CardCode, CardName, CardFName, RUC, DV, Vendedor, Nivel, SubCategoria, TipoCadena, Ruta, Zona, IDRuta, Direccion, DiasEntrega, Horario, Balance, Bloqueado, Correo';
 
 const buildCustomersQuery = ({ from, to, searchTerm = '' }) => {
   let query = supabase

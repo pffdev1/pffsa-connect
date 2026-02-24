@@ -462,6 +462,7 @@ export default function Clientes() {
                 <DetailRow icon="business-outline" label="Razon Social" value={selectedClient.CardName} />
                 <DetailRow icon="storefront-outline" label="Nombre Comercial" value={selectedClient.CardFName} />
                 <DetailRow icon="card-outline" label="RUC / DV" value={`${selectedClient.RUC || 'N/A'} - ${selectedClient.DV || 'N/A'}`} />
+                <DetailRow icon="mail-outline" label="Correo" value={selectedClient.Correo || selectedClient.correo} />
                 <DetailRow icon="person-outline" label="Vendedor" value={selectedClient.Vendedor} />
                 <DetailRow icon="navigate-outline" label="Ruta / Zona" value={`${selectedClient.Ruta || 'N/A'} (${selectedClient.Zona || 'N/A'})`} />
                 <DetailRow icon="location-outline" label="Direccion de Entrega" value={selectedClient.Direccion} />
