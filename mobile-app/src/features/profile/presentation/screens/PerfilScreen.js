@@ -42,6 +42,20 @@ const ORDERS_PAGE_SIZE = 12;
 const ORDERS_LOOKBACK_DAYS = 30;
 const ADMIN_VISIBLE_SELLERS = 5;
 const ORDER_LINES_PREVIEW_LIMIT = 20;
+const PASSWORD_UPDATE_TIMEOUT_MS = 12000;
+
+const withTimeout = (promise, timeoutMs, timeoutMessage) => {
+  let timeoutId = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(timeoutMessage));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+};
 
 export default function Perfil() {
   const router = useRouter();
@@ -644,7 +658,11 @@ export default function Perfil() {
   const handleChangePassword = handleSubmit(async ({ newPassword }) => {
     try {
       setSavingPassword(true);
-      const { error } = await supabase.auth.updateUser({ password: newPassword.trim() });
+      const { error } = await withTimeout(
+        supabase.auth.updateUser({ password: newPassword.trim() }),
+        PASSWORD_UPDATE_TIMEOUT_MS,
+        'La actualizacion de contrasena esta tardando demasiado. Intenta nuevamente.'
+      );
       if (error) throw error;
 
       reset({ newPassword: '', confirmPassword: '' });

@@ -37,6 +37,10 @@ export const isInvalidRefreshTokenError = (error) => {
     raw.includes('invalid refresh token') ||
     raw.includes('refresh token not found') ||
     raw.includes('refresh_token_not_found') ||
+    raw.includes('refresh token has expired') ||
+    raw.includes('session expired') ||
+    raw.includes('session expired (inactivity)') ||
+    raw.includes('inactivity') ||
     raw.includes('invalid_grant') ||
     raw.includes('session not found') ||
     raw.includes('jwt expired')

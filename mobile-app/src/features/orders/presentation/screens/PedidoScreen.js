@@ -904,9 +904,10 @@ export default function Pedido() {
           }}
         >
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'position'}
             keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
             style={styles.checkoutKeyboardWrap}
+            contentContainerStyle={styles.checkoutKeyboardContent}
           >
             <Pressable style={styles.checkoutPanel} onPress={(event) => event.stopPropagation()}>
               <Text style={styles.checkoutTitle}>Datos de entrega</Text>
@@ -1142,14 +1143,17 @@ const styles = StyleSheet.create({
   btnConfirm: { flex: 2, borderRadius: 8 },
   checkoutBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: 'rgba(0,0,0,0.45)'
+  },
+  checkoutKeyboardWrap: {
+    flex: 1,
+    width: '100%'
+  },
+  checkoutKeyboardContent: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 18
-  },
-  checkoutKeyboardWrap: {
-    width: '100%',
-    maxWidth: 520
   },
   checkoutPanel: {
     width: '100%',

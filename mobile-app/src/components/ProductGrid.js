@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { FlatList, Platform, Text, useWindowDimensions, View, StyleSheet } from 'react-native';
+import { FlatList, Keyboard, Platform, Text, useWindowDimensions, View, StyleSheet } from 'react-native';
 import ProductCard from './ProductCard';
 import { COLORS } from '../constants/theme';
 
@@ -63,6 +63,13 @@ export default function ProductGrid({
       updateCellsBatchingPeriod={50}
       windowSize={7}
       removeClippedSubviews={Platform.OS === 'android' ? false : true}
+      keyboardDismissMode="on-drag"
+      keyboardShouldPersistTaps="handled"
+      onScrollBeginDrag={Keyboard.dismiss}
+      onStartShouldSetResponderCapture={() => {
+        Keyboard.dismiss();
+        return false;
+      }}
       onEndReachedThreshold={0.35}
       onEndReached={onEndReached}
       refreshing={refreshing}

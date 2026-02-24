@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { FlatList, Text, useWindowDimensions, View, StyleSheet } from 'react-native';
+import { FlatList, Keyboard, Text, useWindowDimensions, View, StyleSheet } from 'react-native';
 import CustomerCard from './CustomerCard';
 import { COLORS } from '../../../../constants/theme';
 
@@ -70,6 +70,13 @@ export default function CustomerGrid({
       updateCellsBatchingPeriod={60}
       windowSize={7}
       removeClippedSubviews
+      keyboardDismissMode="on-drag"
+      keyboardShouldPersistTaps="handled"
+      onScrollBeginDrag={Keyboard.dismiss}
+      onStartShouldSetResponderCapture={() => {
+        Keyboard.dismiss();
+        return false;
+      }}
       onEndReached={onEndReached}
       onEndReachedThreshold={0.4}
       refreshing={refreshing}

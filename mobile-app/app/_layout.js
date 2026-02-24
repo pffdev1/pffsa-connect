@@ -20,14 +20,13 @@ export default function RootLayout() {
     configureNotificationsAsync().catch(() => {});
 
     const removeNotificationListeners = bindNotificationListeners();
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!session?.user) return;
-      try {
-        await registerPushTokenForCurrentUserAsync();
-        await flushPendingOrders();
-      } catch (_error) {
-        // Ignore token sync failures.
-      }
+      // Keep auth callbacks non-blocking to avoid lock contention with auth mutations.
+      Promise.resolve()
+        .then(() => registerPushTokenForCurrentUserAsync())
+        .then(() => flushPendingOrders())
+        .catch(() => {});
     });
 
     // Cold start: sync only when there is an existing session.

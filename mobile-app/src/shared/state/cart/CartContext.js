@@ -66,12 +66,17 @@ export const CartProvider = ({ children }) => {
 
     initUser();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       const nextUserId = session?.user?.id || null;
       if (currentUserIdRef.current !== nextUserId) {
         currentUserIdRef.current = nextUserId;
         setCartHydrated(false);
-        await hydrateCartForUser(nextUserId);
+        hydrateCartForUser(nextUserId).catch(() => {
+          if (!mounted) return;
+          setCart([]);
+          setCartOwnerId(null);
+          setCartHydrated(true);
+        });
       }
     });
 
