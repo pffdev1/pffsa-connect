@@ -7,6 +7,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -92,7 +93,8 @@ export default function Pedido() {
   const swipeHintPlayedRef = useRef(false);
   const suppressSwipeDeleteRef = useRef(false);
   const sharePressAnim = useRef(new Animated.Value(1)).current;
-  const CheckoutKeyboardContainer = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
+  const checkoutScrollRef = useRef(null);
+  const CheckoutKeyboardContainer = KeyboardAvoidingView;
   const cartCardCodes = useMemo(
     () => Array.from(new Set(cart.map((item) => String(item?.CardCode || '').trim()).filter(Boolean))),
     [cart]
@@ -905,108 +907,122 @@ export default function Pedido() {
           }}
         >
           <CheckoutKeyboardContainer
-            {...(Platform.OS === 'ios' ? { behavior: 'padding', keyboardVerticalOffset: 24 } : {})}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
             style={styles.checkoutKeyboardWrap}
           >
             <View style={styles.checkoutKeyboardContent}>
               <Pressable style={styles.checkoutPanel} onPress={(event) => event.stopPropagation()}>
-              <Text style={styles.checkoutTitle}>Datos de entrega</Text>
-              <Text style={styles.checkoutLabel}>Fecha de entrega</Text>
-              {Platform.OS === 'web' ? (
-                <View style={styles.webDateInputWrap}>
-                  <input
-                    type="date"
-                    min={minDeliveryDateIso}
-                    value={deliveryDate || minDeliveryDateIso}
-                    onChange={(event) => setDeliveryDate(String(event?.target?.value || ''))}
-                    style={{
-                      width: '100%',
-                      height: 30,
-                      border: 'none',
-                      outline: 'none',
-                      fontSize: 15,
-                      fontWeight: 700,
-                      color: COLORS.text,
-                      backgroundColor: '#FFF'
+                <ScrollView
+                  ref={checkoutScrollRef}
+                  style={styles.checkoutScroll}
+                  contentContainerStyle={styles.checkoutScrollContent}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                >
+                  <Text style={styles.checkoutTitle}>Datos de entrega</Text>
+                  <Text style={styles.checkoutLabel}>Fecha de entrega</Text>
+                  {Platform.OS === 'web' ? (
+                    <View style={styles.webDateInputWrap}>
+                      <input
+                        type="date"
+                        min={minDeliveryDateIso}
+                        value={deliveryDate || minDeliveryDateIso}
+                        onChange={(event) => setDeliveryDate(String(event?.target?.value || ''))}
+                        style={{
+                          width: '100%',
+                          height: 30,
+                          border: 'none',
+                          outline: 'none',
+                          fontSize: 15,
+                          fontWeight: 700,
+                          color: COLORS.text,
+                          backgroundColor: '#FFF'
+                        }}
+                      />
+                    </View>
+                  ) : (
+                    <Pressable style={styles.checkoutDateButton} onPress={handleOpenDatePicker}>
+                      <View style={styles.checkoutDateButtonContent}>
+                        <Ionicons name="calendar-outline" size={18} color={COLORS.primary} />
+                        <Text style={deliveryDate ? styles.checkoutDateValue : styles.checkoutDatePlaceholder}>
+                          {deliveryDate || minDeliveryDateIso}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  )}
+                  <Text style={styles.checkoutDateHint}>{formatDateForDisplay(deliveryDate || minDeliveryDateIso)}</Text>
+                  {Platform.OS !== 'android' && showDatePicker && (
+                    <View style={Platform.OS === 'ios' ? styles.iosDatePickerWrap : undefined}>
+                      <DateTimePicker
+                        value={parseISODate(deliveryDate) || getToday()}
+                        mode="date"
+                        minimumDate={getToday()}
+                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                        themeVariant={Platform.OS === 'ios' ? 'light' : undefined}
+                        accentColor={Platform.OS === 'ios' ? COLORS.primary : undefined}
+                        style={Platform.OS === 'ios' ? styles.iosDatePicker : undefined}
+                        onChange={handleDateChange}
+                      />
+                    </View>
+                  )}
+
+                  <Text style={styles.checkoutLabel}>Almacen de origen</Text>
+                  <View style={styles.warehouseList}>
+                    {WAREHOUSE_OPTIONS.map((option) => {
+                      const isActive = selectedWarehouse === option.code;
+                      return (
+                        <Pressable
+                          key={option.code}
+                          onPress={() => setSelectedWarehouse(option.code)}
+                          style={[styles.warehouseOption, isActive && styles.warehouseOptionActive]}
+                        >
+                          <Text style={[styles.warehouseOptionCode, isActive && styles.warehouseOptionCodeActive]}>{option.code}</Text>
+                          <Text style={[styles.warehouseOptionName, isActive && styles.warehouseOptionNameActive]}>{option.name}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  <Text style={styles.checkoutLabel}>Comentarios (opcional)</Text>
+                  <TextInput
+                    value={orderComments}
+                    onChangeText={setOrderComments}
+                    placeholder="Escribe aqui observaciones del pedido..."
+                    multiline
+                    numberOfLines={3}
+                    maxLength={250}
+                    style={styles.checkoutCommentsInput}
+                    onFocus={() => {
+                      setTimeout(() => {
+                        checkoutScrollRef.current?.scrollToEnd?.({ animated: true });
+                      }, 120);
                     }}
                   />
-                </View>
-              ) : (
-                <Pressable style={styles.checkoutDateButton} onPress={handleOpenDatePicker}>
-                  <View style={styles.checkoutDateButtonContent}>
-                    <Ionicons name="calendar-outline" size={18} color={COLORS.primary} />
-                    <Text style={deliveryDate ? styles.checkoutDateValue : styles.checkoutDatePlaceholder}>
-                      {deliveryDate || minDeliveryDateIso}
-                    </Text>
-                  </View>
-                </Pressable>
-              )}
-              <Text style={styles.checkoutDateHint}>{formatDateForDisplay(deliveryDate || minDeliveryDateIso)}</Text>
-              {Platform.OS !== 'android' && showDatePicker && (
-                <View style={Platform.OS === 'ios' ? styles.iosDatePickerWrap : undefined}>
-                  <DateTimePicker
-                    value={parseISODate(deliveryDate) || getToday()}
-                    mode="date"
-                    minimumDate={getToday()}
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    themeVariant={Platform.OS === 'ios' ? 'light' : undefined}
-                    accentColor={Platform.OS === 'ios' ? COLORS.primary : undefined}
-                    style={Platform.OS === 'ios' ? styles.iosDatePicker : undefined}
-                    onChange={handleDateChange}
-                  />
-                </View>
-              )}
+                  <Text style={styles.checkoutCommentCounter}>{`${String(orderComments || '').length}/250`}</Text>
 
-              <Text style={styles.checkoutLabel}>Almacen de origen</Text>
-              <View style={styles.warehouseList}>
-                {WAREHOUSE_OPTIONS.map((option) => {
-                  const isActive = selectedWarehouse === option.code;
-                  return (
-                    <Pressable
-                      key={option.code}
-                      onPress={() => setSelectedWarehouse(option.code)}
-                      style={[styles.warehouseOption, isActive && styles.warehouseOptionActive]}
+                  <View style={styles.checkoutActions}>
+                    <Button
+                      mode="text"
+                      textColor={COLORS.textLight}
+                      disabled={submittingOrder}
+                      onPress={() => {
+                        setCheckoutModalVisible(false);
+                        setShowDatePicker(false);
+                      }}
                     >
-                      <Text style={[styles.warehouseOptionCode, isActive && styles.warehouseOptionCodeActive]}>{option.code}</Text>
-                      <Text style={[styles.warehouseOptionName, isActive && styles.warehouseOptionNameActive]}>{option.name}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-              <Text style={styles.checkoutLabel}>Comentarios (opcional)</Text>
-              <TextInput
-                value={orderComments}
-                onChangeText={setOrderComments}
-                placeholder="Escribe aqui observaciones del pedido..."
-                multiline
-                numberOfLines={3}
-                maxLength={250}
-                style={styles.checkoutCommentsInput}
-              />
-              <Text style={styles.checkoutCommentCounter}>{`${String(orderComments || '').length}/250`}</Text>
-
-              <View style={styles.checkoutActions}>
-                <Button
-                  mode="text"
-                  textColor={COLORS.textLight}
-                  disabled={submittingOrder}
-                  onPress={() => {
-                    setCheckoutModalVisible(false);
-                    setShowDatePicker(false);
-                  }}
-                >
-                  CANCELAR
-                </Button>
-                <Button
-                  mode="contained"
-                  buttonColor={COLORS.primary}
-                  onPress={handleSubmitPedido}
-                  loading={submittingOrder}
-                  disabled={submittingOrder}
-                >
-                  ENVIAR
-                </Button>
-              </View>
+                      CANCELAR
+                    </Button>
+                    <Button
+                      mode="contained"
+                      buttonColor={COLORS.primary}
+                      onPress={handleSubmitPedido}
+                      loading={submittingOrder}
+                      disabled={submittingOrder}
+                    >
+                      ENVIAR
+                    </Button>
+                  </View>
+                </ScrollView>
               </Pressable>
             </View>
           </CheckoutKeyboardContainer>
@@ -1161,8 +1177,11 @@ const styles = StyleSheet.create({
     maxWidth: 520,
     backgroundColor: '#FFF',
     borderRadius: 16,
-    padding: 16
+    padding: 16,
+    maxHeight: '88%'
   },
+  checkoutScroll: { width: '100%' },
+  checkoutScrollContent: { paddingBottom: 4 },
   checkoutTitle: { fontSize: 18, fontWeight: '800', color: COLORS.primary, marginBottom: 10 },
   checkoutLabel: { fontSize: 13, fontWeight: '700', color: COLORS.text, marginBottom: 6, marginTop: 6 },
   checkoutDateButton: {

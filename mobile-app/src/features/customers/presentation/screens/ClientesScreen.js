@@ -3,7 +3,7 @@ import { Alert, View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { BottomSheetModal, BottomSheetView } from '@gorhom/bottom-sheet';
+import { BottomSheetModal, BottomSheetScrollView, BottomSheetView } from '@gorhom/bottom-sheet';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Avatar, Button, Chip, Searchbar, Surface } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
@@ -427,52 +427,58 @@ export default function Clientes() {
         backgroundStyle={styles.sheetBackground}
         handleIndicatorStyle={styles.sheetHandle}
       >
-        <BottomSheetView style={[styles.sheetContent, { paddingBottom: sheetBottomInset + 12 }]}>
+        <BottomSheetView style={styles.sheetContent}>
           <View style={styles.sheetHeader}>
             <Text style={styles.sheetTitle}>Ficha del Cliente</Text>
             <Ionicons name="information-circle-outline" size={24} color={COLORS.primary} />
           </View>
 
           {selectedClient && (
-            <Animated.View entering={FadeInDown.duration(280).springify().damping(18)}>
-              <Surface style={styles.sheetHero} elevation={1}>
-                <Avatar.Icon size={42} icon="domain" color="#FFF" style={styles.sheetAvatar} />
-                <View style={styles.sheetHeroText}>
-                  <Text style={styles.sheetHeroName}>{selectedClient.CardFName || selectedClient.CardName || 'Cliente'}</Text>
-                  <Chip compact style={styles.sheetHeroChip} textStyle={styles.sheetHeroChipText}>
-                    {selectedClient.CardCode || 'Sin codigo'}
-                  </Chip>
-                </View>
-                <View style={styles.sheetHeroBalanceWrap}>
-                  <Text style={styles.sheetHeroBalanceLabel}>Balance</Text>
-                  <Text
-                    style={[
-                      styles.sheetHeroBalanceValue,
-                      {
-                        color: hasValidBalance ? (balanceValue > 0 ? '#E74C3C' : '#27AE60') : COLORS.textLight
-                      }
-                    ]}
-                  >
-                    {hasValidBalance ? `$${balanceValue.toFixed(2)}` : 'No disponible'}
-                  </Text>
-                </View>
-              </Surface>
+            <BottomSheetScrollView
+              style={styles.sheetScroll}
+              contentContainerStyle={styles.sheetScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <Animated.View entering={FadeInDown.duration(280).springify().damping(18)}>
+                <Surface style={styles.sheetHero} elevation={1}>
+                  <Avatar.Icon size={42} icon="domain" color="#FFF" style={styles.sheetAvatar} />
+                  <View style={styles.sheetHeroText}>
+                    <Text style={styles.sheetHeroName}>{selectedClient.CardFName || selectedClient.CardName || 'Cliente'}</Text>
+                    <Chip compact style={styles.sheetHeroChip} textStyle={styles.sheetHeroChipText}>
+                      {selectedClient.CardCode || 'Sin codigo'}
+                    </Chip>
+                  </View>
+                  <View style={styles.sheetHeroBalanceWrap}>
+                    <Text style={styles.sheetHeroBalanceLabel}>Balance</Text>
+                    <Text
+                      style={[
+                        styles.sheetHeroBalanceValue,
+                        {
+                          color: hasValidBalance ? (balanceValue > 0 ? '#E74C3C' : '#27AE60') : COLORS.textLight
+                        }
+                      ]}
+                    >
+                      {hasValidBalance ? `$${balanceValue.toFixed(2)}` : 'No disponible'}
+                    </Text>
+                  </View>
+                </Surface>
 
-              <View style={styles.sheetBody}>
-                <DetailRow icon="business-outline" label="Razon Social" value={selectedClient.CardName} />
-                <DetailRow icon="storefront-outline" label="Nombre Comercial" value={selectedClient.CardFName} />
-                <DetailRow icon="card-outline" label="RUC / DV" value={`${selectedClient.RUC || 'N/A'} - ${selectedClient.DV || 'N/A'}`} />
-                <DetailRow icon="mail-outline" label="Correo" value={selectedClient.Correo || selectedClient.correo} />
-                <DetailRow icon="person-outline" label="Vendedor" value={selectedClient.Vendedor} />
-                <DetailRow icon="navigate-outline" label="Ruta / Zona" value={`${selectedClient.Ruta || 'N/A'} (${selectedClient.Zona || 'N/A'})`} />
-                <DetailRow icon="location-outline" label="Direccion de Entrega" value={selectedClient.Direccion} />
-                <DetailRow icon="calendar-outline" label="Dia de Entrega" value={selectedClient.DiasEntrega} />
-                <DetailRow icon="time-outline" label="Horario de Atencion" value={selectedClient.Horario} />
-              </View>
-            </Animated.View>
+                <View style={styles.sheetBody}>
+                  <DetailRow icon="business-outline" label="Razon Social" value={selectedClient.CardName} />
+                  <DetailRow icon="storefront-outline" label="Nombre Comercial" value={selectedClient.CardFName} />
+                  <DetailRow icon="card-outline" label="RUC / DV" value={`${selectedClient.RUC || 'N/A'} - ${selectedClient.DV || 'N/A'}`} />
+                  <DetailRow icon="mail-outline" label="Correo" value={selectedClient.Correo || selectedClient.correo} />
+                  <DetailRow icon="person-outline" label="Vendedor" value={selectedClient.Vendedor} />
+                  <DetailRow icon="navigate-outline" label="Ruta / Zona" value={`${selectedClient.Ruta || 'N/A'} (${selectedClient.Zona || 'N/A'})`} />
+                  <DetailRow icon="location-outline" label="Direccion de Entrega" value={selectedClient.Direccion} />
+                  <DetailRow icon="calendar-outline" label="Dia de Entrega" value={selectedClient.DiasEntrega} />
+                  <DetailRow icon="time-outline" label="Horario de Atencion" value={selectedClient.Horario} />
+                </View>
+              </Animated.View>
+            </BottomSheetScrollView>
           )}
 
-          <View style={styles.sheetActions}>
+          <View style={[styles.sheetActions, { paddingBottom: sheetBottomInset + 12 }]}>
             <Button mode="outlined" style={styles.sheetActionButton} onPress={closeClientInfo}>
               CERRAR
             </Button>
@@ -564,7 +570,9 @@ const styles = StyleSheet.create({
   errorText: { marginHorizontal: 15, marginTop: 12, color: '#E74C3C', fontSize: 13 },
   sheetBackground: { backgroundColor: '#FFF' },
   sheetHandle: { backgroundColor: '#CDD6E2' },
-  sheetContent: { paddingHorizontal: 18, paddingBottom: 24 },
+  sheetContent: { flex: 1, paddingHorizontal: 18, paddingTop: 4 },
+  sheetScroll: { flex: 1 },
+  sheetScrollContent: { paddingBottom: 12 },
   sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
   sheetTitle: { fontSize: 22, fontWeight: '700', color: COLORS.primary },
   sheetHero: {
@@ -609,6 +617,6 @@ const styles = StyleSheet.create({
   detailTextWrap: { flex: 1 },
   detailLabel: { fontSize: 10, color: COLORS.textLight, textTransform: 'uppercase', letterSpacing: 0.5 },
   detailValue: { fontSize: 13, fontWeight: '600', marginTop: 2 },
-  sheetActions: { marginTop: 20, flexDirection: 'row', gap: 10 },
+  sheetActions: { marginTop: 12, flexDirection: 'row', gap: 10, backgroundColor: '#FFF' },
   sheetActionButton: { flex: 1, borderRadius: 10 }
 });
