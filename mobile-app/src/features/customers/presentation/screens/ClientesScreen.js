@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, View, Text, StyleSheet } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { BottomSheetModal, BottomSheetScrollView, BottomSheetView } from '@gorhom/bottom-sheet';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Avatar, Button, Chip, Searchbar, Surface } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
@@ -38,7 +37,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default function Clientes() {
   const insets = useSafeAreaInsets();
-  const sheetBottomInset = Math.max(insets.bottom, 12);
+  const actionBottomInset = Math.max(insets.bottom, 12);
   const [clientes, setClientes] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -56,8 +55,6 @@ export default function Clientes() {
   const isLoadingMoreRef = useRef(false);
   const hasInitializedSearchRef = useRef(false);
   const handledOrderCompletedRef = useRef('');
-  const detailsSheetRef = useRef(null);
-  const snapPoints = useMemo(() => ['83%'], []);
   const router = useRouter();
   const { orderCompleted } = useLocalSearchParams();
   const { clearCart } = useCart();
@@ -92,7 +89,6 @@ export default function Clientes() {
     handledOrderCompletedRef.current = completedToken;
     clearCartRef.current?.();
     AsyncStorage.setItem(CATALOG_RESET_ON_FOCUS_KEY, '1').catch(() => {});
-    detailsSheetRef.current?.dismiss();
     setSelectedClient(null);
     setSearch('');
     setDebouncedSearch('');
@@ -100,7 +96,6 @@ export default function Clientes() {
 
   useFocusEffect(
     useCallback(() => {
-      detailsSheetRef.current?.dismiss();
       setSelectedClient(null);
       setSearch('');
       setDebouncedSearch('');
@@ -347,11 +342,10 @@ export default function Clientes() {
 
   const openClientInfo = useCallback((item) => {
     setSelectedClient(item);
-    detailsSheetRef.current?.present();
   }, []);
 
   const closeClientInfo = useCallback(() => {
-    detailsSheetRef.current?.dismiss();
+    setSelectedClient(null);
   }, []);
 
   const handleOpenCatalog = useCallback((item) => {
@@ -370,6 +364,13 @@ export default function Clientes() {
       }
     });
   }, [router]);
+
+  const handleLiftOrderFromSheet = useCallback(() => {
+    const c = selectedClient;
+    closeClientInfo();
+    if (!c) return;
+    handleOpenCatalog(c);
+  }, [selectedClient, closeClientInfo, handleOpenCatalog]);
 
   const balanceValue = Number(selectedClient?.Balance);
   const hasValidBalance = Number.isFinite(balanceValue);
@@ -418,24 +419,18 @@ export default function Clientes() {
         emptyText={search ? `No se encontraron clientes para "${search}"` : 'No hay clientes disponibles'}
       />
 
-      <BottomSheetModal
-        ref={detailsSheetRef}
-        index={0}
-        snapPoints={snapPoints}
-        bottomInset={sheetBottomInset}
-        onDismiss={() => setSelectedClient(null)}
-        backgroundStyle={styles.sheetBackground}
-        handleIndicatorStyle={styles.sheetHandle}
-      >
-        <BottomSheetView style={styles.sheetContent}>
+      <Modal visible={Boolean(selectedClient)} animationType="slide" onRequestClose={closeClientInfo}>
+        <SafeAreaView style={styles.modalContainer} edges={['top', 'left', 'right']}>
           <View style={styles.sheetHeader}>
             <Text style={styles.sheetTitle}>Ficha del Cliente</Text>
-            <Ionicons name="information-circle-outline" size={24} color={COLORS.primary} />
+            <Pressable onPress={closeClientInfo} style={styles.sheetCloseButton} hitSlop={8}>
+              <Ionicons name="close" size={24} color={COLORS.primary} />
+            </Pressable>
           </View>
 
-          <BottomSheetScrollView
+          <ScrollView
             style={styles.sheetScroll}
-            contentContainerStyle={[styles.sheetScrollContent, { paddingBottom: sheetBottomInset + 12 }]}
+            contentContainerStyle={[styles.sheetScrollContent, { paddingBottom: actionBottomInset + 100 }]}
             showsVerticalScrollIndicator={false}
           >
             {selectedClient && (
@@ -476,28 +471,24 @@ export default function Clientes() {
                 </View>
               </Animated.View>
             )}
+          </ScrollView>
 
-            <View style={styles.sheetActions}>
-              <Button mode="outlined" style={styles.sheetActionButton} onPress={closeClientInfo}>
-                CERRAR
-              </Button>
-              <Button
-                mode="contained"
-                buttonColor={COLORS.primary}
-                style={styles.sheetActionButton}
-                onPress={() => {
-                  const c = selectedClient;
-                  closeClientInfo();
-                  if (!c) return;
-                  handleOpenCatalog(c);
-                }}
-              >
-                LEVANTAR PEDIDO
-              </Button>
-            </View>
-          </BottomSheetScrollView>
-        </BottomSheetView>
-      </BottomSheetModal>
+          <View style={[styles.sheetActions, { paddingBottom: actionBottomInset }]}>
+            <Button mode="outlined" style={styles.sheetActionButton} onPress={closeClientInfo}>
+              CERRAR
+            </Button>
+            <Button
+              mode="contained"
+              buttonColor={COLORS.primary}
+              style={styles.sheetActionButton}
+              onPress={handleLiftOrderFromSheet}
+              disabled={!selectedClient}
+            >
+              LEVANTAR PEDIDO
+            </Button>
+          </View>
+        </SafeAreaView>
+      </Modal>
 
     </SafeAreaView>
   );
@@ -568,13 +559,19 @@ const styles = StyleSheet.create({
   },
   searchInput: { fontSize: 16, color: COLORS.text, minHeight: 0 },
   errorText: { marginHorizontal: 15, marginTop: 12, color: '#E74C3C', fontSize: 13 },
-  sheetBackground: { backgroundColor: '#FFF' },
-  sheetHandle: { backgroundColor: '#CDD6E2' },
-  sheetContent: { flex: 1, paddingHorizontal: 18, paddingTop: 4 },
-  sheetScroll: { flex: 1 },
+  modalContainer: { flex: 1, backgroundColor: '#FFF', paddingHorizontal: 18, paddingTop: 4 },
+  sheetScroll: { flex: 1, minHeight: 0 },
   sheetScrollContent: { paddingBottom: 12 },
   sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
   sheetTitle: { fontSize: 22, fontWeight: '700', color: COLORS.primary },
+  sheetCloseButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F2F6FC'
+  },
   sheetHero: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -617,6 +614,15 @@ const styles = StyleSheet.create({
   detailTextWrap: { flex: 1 },
   detailLabel: { fontSize: 10, color: COLORS.textLight, textTransform: 'uppercase', letterSpacing: 0.5 },
   detailValue: { fontSize: 13, fontWeight: '600', marginTop: 2 },
-  sheetActions: { marginTop: 12, flexDirection: 'row', gap: 10, backgroundColor: '#FFF' },
+  sheetActions: {
+    flexDirection: 'row',
+    gap: 10,
+    backgroundColor: '#FFF',
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    paddingBottom: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E8EEF6'
+  },
   sheetActionButton: { flex: 1, borderRadius: 10 }
 });
