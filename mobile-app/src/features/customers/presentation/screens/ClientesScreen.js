@@ -433,12 +433,12 @@ export default function Clientes() {
             <Ionicons name="information-circle-outline" size={24} color={COLORS.primary} />
           </View>
 
-          {selectedClient && (
-            <BottomSheetScrollView
-              style={styles.sheetScroll}
-              contentContainerStyle={styles.sheetScrollContent}
-              showsVerticalScrollIndicator={false}
-            >
+          <BottomSheetScrollView
+            style={styles.sheetScroll}
+            contentContainerStyle={[styles.sheetScrollContent, { paddingBottom: sheetBottomInset + 12 }]}
+            showsVerticalScrollIndicator={false}
+          >
+            {selectedClient && (
               <Animated.View entering={FadeInDown.duration(280).springify().damping(18)}>
                 <Surface style={styles.sheetHero} elevation={1}>
                   <Avatar.Icon size={42} icon="domain" color="#FFF" style={styles.sheetAvatar} />
@@ -475,27 +475,27 @@ export default function Clientes() {
                   <DetailRow icon="time-outline" label="Horario de Atencion" value={selectedClient.Horario} />
                 </View>
               </Animated.View>
-            </BottomSheetScrollView>
-          )}
+            )}
 
-          <View style={[styles.sheetActions, { paddingBottom: sheetBottomInset + 12 }]}>
-            <Button mode="outlined" style={styles.sheetActionButton} onPress={closeClientInfo}>
-              CERRAR
-            </Button>
-            <Button
-              mode="contained"
-              buttonColor={COLORS.primary}
-              style={styles.sheetActionButton}
-              onPress={() => {
-                const c = selectedClient;
-                closeClientInfo();
-                if (!c) return;
-                handleOpenCatalog(c);
-              }}
-            >
-              LEVANTAR PEDIDO
-            </Button>
-          </View>
+            <View style={styles.sheetActions}>
+              <Button mode="outlined" style={styles.sheetActionButton} onPress={closeClientInfo}>
+                CERRAR
+              </Button>
+              <Button
+                mode="contained"
+                buttonColor={COLORS.primary}
+                style={styles.sheetActionButton}
+                onPress={() => {
+                  const c = selectedClient;
+                  closeClientInfo();
+                  if (!c) return;
+                  handleOpenCatalog(c);
+                }}
+              >
+                LEVANTAR PEDIDO
+              </Button>
+            </View>
+          </BottomSheetScrollView>
         </BottomSheetView>
       </BottomSheetModal>
 
