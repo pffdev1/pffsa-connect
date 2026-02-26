@@ -47,6 +47,26 @@ export const fetchOrdersInRange = async ({ fromIso, toIso, createdBy = '', limit
   return { data: [], error: { message: 'No se pudo consultar sales_orders con los esquemas esperados.' } };
 };
 
+export const fetchOrdersCountInRange = async ({ fromIso, toIso, createdBy = '' } = {}) => {
+  const attempts = ['id, created_by, seller_id', 'id, created_by', 'id, seller_id', 'id'];
+
+  for (const select of attempts) {
+    let query = supabase
+      .from('sales_orders')
+      .select(select, { head: true, count: 'exact' })
+      .gte('created_at', fromIso)
+      .lt('created_at', toIso);
+
+    query = applyOrderOwnerFilter(query, { select, ownerId: createdBy });
+    const result = await query;
+    if (!result.error) {
+      return { count: Number(result.count || 0), error: null };
+    }
+  }
+
+  return { count: 0, error: { message: 'No se pudo contar sales_orders con los esquemas esperados.' } };
+};
+
 export const fetchAllOrders = async ({ createdBy = '' } = {}) => {
   const attempts = [
     'id, card_code, sap_docnum, created_by, seller_id, status, created_at, doc_due_date',

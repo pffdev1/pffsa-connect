@@ -13,6 +13,7 @@ import {
   fetchAllOrders,
   fetchAuthUser,
   fetchCustomerNamesByCardCodes,
+  fetchOrdersCountInRange,
   fetchLinesByOrderIds,
   fetchOrdersInRange,
   fetchProfile,
@@ -40,21 +41,18 @@ export const loadUserContext = async () => {
 
 export const loadVendorKpis = async (userId) => {
   const { fromIso, toIso } = buildTodayQueryRange();
-  const { data: todayRows, error: todayError } = await fetchOrdersInRange({ fromIso, toIso, createdBy: userId, limit: 300 });
+  const { data: todayRows, error: todayError } = await fetchOrdersInRange({ fromIso, toIso, createdBy: userId, limit: 1200 });
   if (todayError) throw todayError;
-  const todayCount = keepTodayOrders(todayRows || []).length;
+  const todayOrders = keepTodayOrders(todayRows || []);
+  const { count: todayCount, error: todayCountError } = await fetchOrdersCountInRange({ fromIso, toIso, createdBy: userId });
+  if (todayCountError) throw todayCountError;
 
+  const todayOrderIds = Array.from(new Set(todayOrders.map((row) => String(row?.id || '').trim()).filter(Boolean)));
   let totalSales = 0;
-  try {
-    const { data: allOrders, error: allOrdersError } = await fetchAllOrders({ createdBy: userId });
-    if (allOrdersError) throw allOrdersError;
-    const orderIds = (allOrders || []).map((row) => String(row?.id || '').trim()).filter(Boolean);
-    if (orderIds.length > 0) {
-      const { data: linesRows } = await fetchLinesByOrderIds(orderIds);
-      totalSales = resolveOrderTotal(linesRows || []);
-    }
-  } catch (_error) {
-    // Keep fallback as 0 for totalSales; caller decides if it should preserve previous.
+  if (todayOrderIds.length > 0) {
+    const { data: linesRows, error: linesError } = await fetchLinesByOrderIds(todayOrderIds);
+    if (linesError) throw linesError;
+    totalSales = resolveOrderTotal(linesRows || []);
   }
 
   return {
@@ -65,8 +63,10 @@ export const loadVendorKpis = async (userId) => {
 
 export const loadAdminDashboardData = async () => {
   const { fromIso, toIso } = buildTodayQueryRange();
-  const { data: todayOrdersRows, error: todayOrdersError } = await fetchOrdersInRange({ fromIso, toIso, limit: 600 });
+  const { data: todayOrdersRows, error: todayOrdersError } = await fetchOrdersInRange({ fromIso, toIso, limit: 3000 });
   if (todayOrdersError) throw todayOrdersError;
+  const { count: todayOrdersCount, error: todayCountError } = await fetchOrdersCountInRange({ fromIso, toIso });
+  if (todayCountError) throw todayCountError;
   const filteredTodayOrders = keepTodayOrders(todayOrdersRows || []);
   const todayOrderIds = filteredTodayOrders.map((row) => String(row?.id || '').trim()).filter(Boolean);
   const { data: todayLinesRows } = await fetchLinesByOrderIds(todayOrderIds);
@@ -173,7 +173,7 @@ export const loadAdminDashboardData = async () => {
 
   return {
     adminKpis: {
-      ordersToday: filteredTodayOrders.length,
+      ordersToday: todayOrdersCount,
       salesToday: resolveOrderTotal(todayLinesRows || []),
       salesGlobalTotal,
       activeSellers: summary.activeSellers,
@@ -260,14 +260,31 @@ export const loadOrdersTodayDetailsData = async ({ authUserId, role }) => {
 };
 
 export const loadSalesSummaryData = async ({ authUserId, role }) => {
-  const { data: allOrders, error: ordersError } = await fetchAllOrders({
-    createdBy: role === 'admin' ? '' : authUserId
-  });
-  if (ordersError) throw ordersError;
+  if (role !== 'admin') {
+    const { fromIso, toIso } = buildTodayQueryRange();
+    const { data: todayRows, error: todayError } = await fetchOrdersInRange({
+      fromIso,
+      toIso,
+      createdBy: authUserId,
+      limit: 600
+    });
+    if (todayError) throw todayError;
+    const todayOrders = keepTodayOrders(todayRows || []);
+    const todayOrderIds = Array.from(new Set(todayOrders.map((row) => String(row?.id || '').trim()).filter(Boolean)));
+    if (todayOrderIds.length === 0) {
+      return { allOrdersCount: 0, allSalesTotal: 0 };
+    }
+    const { data: linesRows, error: linesError } = await fetchLinesByOrderIds(todayOrderIds);
+    if (linesError) throw linesError;
+    return {
+      allOrdersCount: todayOrderIds.length,
+      allSalesTotal: resolveOrderTotal(linesRows || [])
+    };
+  }
 
-  const scopedOrders =
-    role === 'admin' ? allOrders || [] : (allOrders || []).filter((row) => String(resolveOrderSellerId(row) || '').trim() === authUserId);
-  const allOrderIds = scopedOrders.map((row) => String(row?.id || '').trim()).filter(Boolean);
+  const { data: allOrders, error: ordersError } = await fetchAllOrders();
+  if (ordersError) throw ordersError;
+  const allOrderIds = (allOrders || []).map((row) => String(row?.id || '').trim()).filter(Boolean);
   if (allOrderIds.length === 0) {
     return { allOrdersCount: 0, allSalesTotal: 0 };
   }

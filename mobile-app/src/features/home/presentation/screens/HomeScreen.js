@@ -501,6 +501,7 @@ export default function HomeScreen() {
         loading={loadingSalesSummary}
         allOrdersCount={allOrdersCount}
         allSalesTotal={allSalesTotal}
+        title={isAdmin ? 'Ventas totales' : 'Ventas de hoy'}
         toMoney={toMoney}
         styles={styles}
       />

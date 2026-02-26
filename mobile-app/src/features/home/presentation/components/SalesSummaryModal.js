@@ -8,6 +8,7 @@ export default function SalesSummaryModal({
   loading,
   allOrdersCount,
   allSalesTotal,
+  title = 'Ventas totales',
   toMoney,
   styles
 }) {
@@ -17,7 +18,7 @@ export default function SalesSummaryModal({
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={styles.modalPanel}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Ventas totales</Text>
+            <Text style={styles.modalTitle}>{title}</Text>
             <Button compact onPress={onClose}>
               Cerrar
             </Button>

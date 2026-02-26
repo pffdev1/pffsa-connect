@@ -32,7 +32,7 @@ export default function SellerDashboardSection({
           <View style={styles.kpiIconWrap}>
             <Ionicons name="cash-outline" size={22} color="#003a78" />
           </View>
-          <Text style={styles.kpiLabel}>Ventas totales</Text>
+          <Text style={styles.kpiLabel}>Ventas de hoy</Text>
           <Text style={styles.kpiValue}>{loading ? '...' : toMoney(totalSales)}</Text>
           <Text style={styles.kpiHint}>Tocar para ver detalle</Text>
         </Pressable>

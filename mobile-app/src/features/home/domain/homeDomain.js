@@ -4,19 +4,12 @@ export const toMoney = (value) => {
   return `$${n.toFixed(2)}`;
 };
 
-const TODAY_QUERY_BUFFER_HOURS = 14;
-
 export const buildTodayQueryRange = () => {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
-
-  const from = new Date(start);
-  from.setHours(from.getHours() - TODAY_QUERY_BUFFER_HOURS);
-  const to = new Date(end);
-  to.setHours(to.getHours() + TODAY_QUERY_BUFFER_HOURS);
-  return { fromIso: from.toISOString(), toIso: to.toISOString() };
+  return { fromIso: start.toISOString(), toIso: end.toISOString() };
 };
 
 export const isCreatedTodayLocal = (value) => {
@@ -40,9 +33,7 @@ export const getTodayLocalIsoDate = () => {
 };
 
 export const isOrderOfToday = (row) => {
-  const createdToday = isCreatedTodayLocal(row?.created_at);
-  const dueDate = String(row?.doc_due_date || '').trim();
-  return createdToday || (dueDate && dueDate === getTodayLocalIsoDate());
+  return isCreatedTodayLocal(row?.created_at);
 };
 
 export const keepTodayOrders = (rows = []) => rows.filter((row) => isOrderOfToday(row));
