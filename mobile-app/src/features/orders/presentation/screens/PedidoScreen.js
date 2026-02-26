@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Animated,
   FlatList,
@@ -60,6 +61,8 @@ const WAREHOUSE_OPTIONS = [
 const SAP_DOCNUM_POLL_ATTEMPTS = 12;
 const SAP_DOCNUM_POLL_DELAY_MS = 1000;
 const SWIPE_HINT_SEEN_KEY = 'pedido:swipe-hint-seen:v1';
+const SHARE_PRINT_TIMEOUT_MS = 90000;
+const SHARE_DIALOG_TIMEOUT_MS = 20000;
 const PRODUCT_FALLBACK_IMAGE =
   'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=300&q=80';
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -652,34 +655,44 @@ export default function Pedido() {
       const logoUrl = 'https://uploadimage.pedersenfinefoods.com/mainlogo.png';
       const safeCustomer = `${orderCustomerName || 'Sin nombre'}${orderCustomerCode ? ` (${orderCustomerCode})` : ''}`;
       const orderTotal = Number(getTotal() || 0);
+      const imageThumbSize = cart.length > 50 ? 42 : 54;
 
-      const rowsHtml = cart
-        .map((item) => {
-          const code = escapeHtml(item?.ItemCode || '');
-          const name = escapeHtml(item?.ItemName || '');
-          const uom = escapeHtml(String(item?.UOM || item?.uom || '').trim());
-          const qty = Number(item?.quantity || 0);
-          const price = Number(item?.Price || 0);
-          const subtotal = qty * price;
-          const rawImageUrl = resolveCartImageUrl(item);
-          const imageUrl = escapeHtml(String(rawImageUrl || '').trim() || placeholder);
+      const withTimeout = (promise, timeoutMs, timeoutMessage) =>
+        Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+          })
+        ]);
 
-          return `
-            <tr class="row-item">
-              <td style="padding:6px; vertical-align:middle;">
-                <div style="font-weight:700; line-height:1.2;">${name}</div>
-                <div style="font-size:10px; color:#666; margin-top:2px;">Item: ${code}</div>
-              </td>
-              <td class="text-center"><img src="${imageUrl}" class="img-thumb" width="58" height="58" /></td>
-              <td class="text-center">${qty}${uom ? ` ${uom}` : ''}</td>
-              <td class="text-right">$ ${price.toFixed(2)}</td>
-              <td class="text-right">$ ${subtotal.toFixed(2)}</td>
-            </tr>
-          `;
-        })
-        .join('');
+      const buildRowsHtml = () =>
+        cart
+          .map((item) => {
+            const code = escapeHtml(item?.ItemCode || '');
+            const name = escapeHtml(item?.ItemName || '');
+            const uom = escapeHtml(String(item?.UOM || item?.uom || '').trim());
+            const qty = Number(item?.quantity || 0);
+            const price = Number(item?.Price || 0);
+            const subtotal = qty * price;
+            const rawImageUrl = resolveCartImageUrl(item);
+            const imageUrl = escapeHtml(String(rawImageUrl || '').trim() || placeholder);
 
-      const html = `
+            return `
+              <tr class="row-item">
+                <td style="padding:6px; vertical-align:middle;">
+                  <div style="font-weight:700; line-height:1.2;">${name}</div>
+                  <div style="font-size:10px; color:#666; margin-top:2px;">Item: ${code}</div>
+                </td>
+                <td class="text-center"><img src="${imageUrl}" class="img-thumb" width="${imageThumbSize}" height="${imageThumbSize}" /></td>
+                <td class="text-center">${qty}${uom ? ` ${uom}` : ''}</td>
+                <td class="text-right">$ ${price.toFixed(2)}</td>
+                <td class="text-right">$ ${subtotal.toFixed(2)}</td>
+              </tr>
+            `;
+          })
+          .join('');
+
+      const buildShareHtml = () => `
 <!doctype html>
 <html>
 <head>
@@ -687,97 +700,94 @@ export default function Pedido() {
   <style>
     :root { --brand:#0b4b88; }
     body { font-family: Arial, sans-serif; font-size:12px; color:#333; margin:0; padding:0; }
-    .main-table { width:100%; border-collapse:collapse; }
-    thead { display: table-header-group; }
-    .header-container { border-bottom:3px solid var(--brand); padding-bottom:10px; margin-bottom:14px; width:100%; }
-    .header-flex { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
-    .header-info { width:66%; }
-    .header-logo { width:30%; text-align:right; }
+    .doc { padding-bottom: 8px; }
+    .header-container { border-bottom:2px solid var(--brand); padding-bottom:10px; margin-bottom:14px; width:100%; }
+    .header-flex { width:100%; }
+    .header-info { width:100%; }
+    .header-logo { text-align:right; margin-top:8px; }
     .logo { max-width:150px; max-height:58px; }
     .title { font-size:18px; font-weight:700; color:var(--brand); margin-bottom:6px; }
     .data-box { border:1px solid #ddd; border-radius:4px; padding:8px; line-height:1.45; font-size:11px; }
     .items-table { width:100%; border-collapse:collapse; margin-top:8px; }
-    .items-table th { background:var(--brand); color:#fff; padding:8px; text-align:left; font-size:11px; }
+    .items-table th { background:var(--brand); color:#fff; padding:7px; text-align:left; font-size:11px; }
     .items-table td { border:1px solid #eee; padding:6px; }
-    .row-item { page-break-inside: avoid !important; break-inside: avoid !important; }
     .totals-wrapper { width:100%; margin-top:14px; page-break-inside:avoid; }
     .totals-table { width:35%; float:right; border-collapse:collapse; }
     .totals-table td { padding:4px 8px; background:#f9f9f9; border-bottom:1px solid #eee; }
     .totals-table tr:last-child td { border-top:2px solid var(--brand); font-weight:700; background:#f0f6fb; color:var(--brand); }
-    .footer-note { text-align:center; color:#dd052b; margin-top:22px; font-size:11px; border-top:1px solid #eee; padding-top:10px; page-break-inside:avoid; }
+    .footer-note { text-align:center; color:#dd052b; margin-top:16px; font-size:11px; border-top:1px solid #eee; padding-top:10px; }
     .img-thumb { object-fit:contain; display:block; margin:0 auto; border-radius:6px; }
     .text-right { text-align:right; }
     .text-center { text-align:center; }
-    .footer { position:fixed; bottom:0; width:100%; padding:10px 0; background:#fff; border-top:1px solid #eee; }
-    .footer-address { font-size:9px; color:#888; text-align:center; }
+    .footer-address { font-size:9px; color:#888; text-align:center; margin-top:14px; }
     @page { margin:15mm 15mm 25mm 15mm; }
   </style>
 </head>
 <body>
-  <table class="main-table">
-    <thead>
-      <tr>
-        <td>
-          <div class="header-container">
-            <div class="header-flex">
-              <div class="header-info">
-                <div class="title">RESUMEN DE PEDIDO</div>
-                <div class="data-box">
-                  <div><strong>Cliente:</strong> ${escapeHtml(safeCustomer)}</div>
-                  <div><strong>Fecha:</strong> ${escapeHtml(createdAt)}</div>
-                  <div><strong>Lineas:</strong> ${cart.length}</div>
-                </div>
-              </div>
-              <div class="header-logo">
-                <img src="${escapeHtml(logoUrl)}" class="logo" />
-              </div>
-            </div>
+  <div class="doc">
+    <div class="header-container">
+      <div class="header-flex">
+        <div class="header-info">
+          <div class="title">RESUMEN DE PEDIDO</div>
+          <div class="data-box">
+            <div><strong>Cliente:</strong> ${escapeHtml(safeCustomer)}</div>
+            <div><strong>Fecha:</strong> ${escapeHtml(createdAt)}</div>
+            <div><strong>Lineas:</strong> ${cart.length}</div>
           </div>
-        </td>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td>
-          <table class="items-table">
-            <thead>
-              <tr>
-                <th style="width:45%;">Producto</th>
-                <th class="text-center">Foto</th>
-                <th class="text-center">Cant.</th>
-                <th class="text-right">Precio</th>
-                <th class="text-right">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rowsHtml}
-            </tbody>
-          </table>
-          <div class="totals-wrapper">
-            <table class="totals-table">
-              <tr><td>Subtotal:</td><td class="text-right">$ ${orderTotal.toFixed(2)}</td></tr>
-              <tr><td>Total:</td><td class="text-right">$ ${orderTotal.toFixed(2)}</td></tr>
-            </table>
-          </div>
-          <div style="clear:both;"></div>
-          <div class="footer-note"><strong>Nota: Cotizacion valida por 7 dias calendario.</strong></div>
-        </td>
-      </tr>
-    </tbody>
-  </table>
-  <div class="footer">
+        </div>
+        <div class="header-logo">
+          <img src="${escapeHtml(logoUrl)}" class="logo" />
+        </div>
+      </div>
+    </div>
+
+    <table class="items-table">
+      <thead>
+        <tr>
+          <th style="width:45%;">Producto</th>
+          <th class="text-center">Foto</th>
+          <th class="text-center">Cant.</th>
+          <th class="text-right">Precio</th>
+          <th class="text-right">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${buildRowsHtml()}
+      </tbody>
+    </table>
+
+    <div class="totals-wrapper">
+      <table class="totals-table">
+        <tr><td>Subtotal:</td><td class="text-right">$ ${orderTotal.toFixed(2)}</td></tr>
+        <tr><td>Total:</td><td class="text-right">$ ${orderTotal.toFixed(2)}</td></tr>
+      </table>
+    </div>
+    <div style="clear:both;"></div>
+    <div class="footer-note"><strong>Nota: Cotizacion valida por 7 dias calendario.</strong></div>
     <div class="footer-address">Ave. Cincuentenario, Edificio Pedersen Fine Foods, Ciudad de Panama</div>
   </div>
 </body>
 </html>
       `;
+      const fullHtml = buildShareHtml();
+      const printResult = await withTimeout(
+        Print.printToFileAsync({ html: fullHtml }),
+        SHARE_PRINT_TIMEOUT_MS,
+        'La generacion del PDF tardo demasiado. Intenta nuevamente con buena conexion.'
+      );
+      const uri = printResult?.uri || null;
 
-      const { uri } = await Print.printToFileAsync({ html });
-      await Sharing.shareAsync(uri, {
-        mimeType: 'application/pdf',
-        dialogTitle: 'Compartir carrito en PDF',
-        UTI: 'com.adobe.pdf'
-      });
+      if (!uri) throw new Error('No se pudo generar el archivo PDF.');
+
+      await withTimeout(
+        Sharing.shareAsync(uri, {
+          mimeType: 'application/pdf',
+          dialogTitle: 'Compartir carrito en PDF',
+          UTI: 'com.adobe.pdf'
+        }),
+        SHARE_DIALOG_TIMEOUT_MS,
+        'No se pudo abrir el menu de compartir.'
+      );
     } catch (error) {
       Alert.alert('Error', error?.message || 'No se pudo compartir el carrito en PDF.');
     } finally {
@@ -834,8 +844,12 @@ export default function Pedido() {
                   disabled={sharingPdf}
                   style={styles.topPanelShareBtn}
                 >
-                  <Animated.View style={{ transform: [{ scale: sharePressAnim }] }}>
-                    <Ionicons name="share-outline" size={18} color="#FFF" />
+                  <Animated.View style={[styles.topPanelShareContent, { transform: [{ scale: sharePressAnim }] }]}>
+                    {sharingPdf ? (
+                      <ActivityIndicator size="small" color="#FFF" />
+                    ) : (
+                      <Ionicons name="share-outline" size={18} color="#FFF" />
+                    )}
                   </Animated.View>
                 </Pressable>
               </View>
@@ -1064,6 +1078,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.3)',
     backgroundColor: 'rgba(255,255,255,0.16)',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  topPanelShareContent: {
+    width: 18,
+    height: 18,
     alignItems: 'center',
     justifyContent: 'center'
   },
