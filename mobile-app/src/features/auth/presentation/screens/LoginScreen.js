@@ -14,7 +14,7 @@ import { login } from '../../application/loginUseCase';
 
 const PRIMARY_LOGO = require('../../../../../assets/logo.png');
 const FALLBACK_LOGO = require('../../../../../assets/mainlogo.png');
-const LOCAL_APP_VERSION = String(Constants?.expoConfig?.version || '0.0.0');
+const LOCAL_APP_VERSION = String(Constants?.expoConfig?.version || '1.0.4');
 
 const loginSchema = z.object({
   email: z

@@ -10,6 +10,21 @@ const matchesCartIdentifier = (item, identifier) =>
   item?.cartKey === identifier || toSafeString(item?.ItemCode) === identifier;
 const CART_STORAGE_KEY_PREFIX = 'cart:v1:user:';
 const getCartStorageKey = (userId) => `${CART_STORAGE_KEY_PREFIX}${toSafeString(userId)}`;
+const normalizeCartItem = (product = {}) => {
+  const safeCardCode = toSafeString(product?.CardCode);
+  const safeItemCode = toSafeString(product?.ItemCode);
+  if (!safeCardCode || !safeItemCode) return null;
+
+  const parsedQuantity = Number(String(product?.quantity ?? '1').replace(',', '.'));
+  const normalizedQuantity = Number.isFinite(parsedQuantity) && parsedQuantity > 0 ? roundQty(parsedQuantity) : 1;
+  return {
+    ...product,
+    CardCode: safeCardCode,
+    ItemCode: safeItemCode,
+    quantity: normalizedQuantity,
+    cartKey: buildCartKey({ CardCode: safeCardCode, ItemCode: safeItemCode })
+  };
+};
 
 export const CartProvider = ({ children }) => {
   const [cart, setCart] = useState([]);
@@ -93,21 +108,10 @@ export const CartProvider = ({ children }) => {
 
   // Add or increment quantity (supports decimals, e.g. 1.5 KG)
   const addToCart = (product) => {
-    const safeCardCode = toSafeString(product?.CardCode);
-    const safeItemCode = toSafeString(product?.ItemCode);
-    if (!safeCardCode || !safeItemCode) return;
-
-    const rawQuantity = String(product?.quantity ?? '1').replace(',', '.');
-    const parsedQuantity = Number(rawQuantity);
-    const quantityToAdd = Number.isFinite(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : 1;
-    const normalizedQuantityToAdd = roundQty(quantityToAdd);
-    const nextProduct = {
-      ...product,
-      CardCode: safeCardCode,
-      ItemCode: safeItemCode,
-      quantity: normalizedQuantityToAdd,
-      cartKey: buildCartKey({ CardCode: safeCardCode, ItemCode: safeItemCode })
-    };
+    const nextProduct = normalizeCartItem(product);
+    if (!nextProduct) return;
+    const safeCardCode = nextProduct.CardCode;
+    const normalizedQuantityToAdd = nextProduct.quantity;
 
     setCart((prevCart) => {
       const currentCardCode = toSafeString(prevCart[0]?.CardCode);
@@ -122,6 +126,13 @@ export const CartProvider = ({ children }) => {
       }
       return [...nextCartBase, nextProduct];
     });
+  };
+
+  const replaceCart = (nextItems = []) => {
+    const normalized = Array.isArray(nextItems)
+      ? nextItems.map((item) => normalizeCartItem(item)).filter(Boolean)
+      : [];
+    setCart(normalized);
   };
 
   const updateCartItemQuantity = (identifier, nextQuantity) => {
@@ -158,7 +169,7 @@ export const CartProvider = ({ children }) => {
   const getTotal = () => cart.reduce((acc, item) => acc + item.Price * item.quantity, 0);
 
   return (
-    <CartContext.Provider value={{ cart, addToCart, removeFromCart, updateCartItemQuantity, clearCart, getTotal }}>
+    <CartContext.Provider value={{ cart, addToCart, removeFromCart, updateCartItemQuantity, clearCart, replaceCart, getTotal }}>
       {children}
     </CartContext.Provider>
   );

@@ -40,10 +40,14 @@ import {
 import { useCart } from '../../../../shared/state/cart/CartContext';
 import { APP_LAYOUT, COLORS, GLOBAL_STYLES } from '../../../../constants/theme';
 import {
+  createSavedOrderCart,
+  deleteSavedOrderCart,
   fetchCurrentAuthUser,
   fetchCustomerRouteMeta,
   fetchCustomersForValidation,
-  fetchSalesOrderStatus
+  fetchSalesOrderStatus,
+  fetchSavedOrderCarts,
+  removeExpiredSavedOrderCarts
 } from '../../infrastructure/ordersRepository';
 import { buildClientOrderId, buildOrderLinesPayload } from '../../application/orderBuilders';
 import {
@@ -60,9 +64,11 @@ const WAREHOUSE_OPTIONS = [
 ];
 const SAP_DOCNUM_POLL_ATTEMPTS = 12;
 const SAP_DOCNUM_POLL_DELAY_MS = 1000;
+const MAX_SAVED_CARTS = 3;
 const SWIPE_HINT_SEEN_KEY = 'pedido:swipe-hint-seen:v1';
 const SHARE_PRINT_TIMEOUT_MS = 90000;
 const SHARE_DIALOG_TIMEOUT_MS = 20000;
+const SAVED_CART_TTL_MS = 48 * 60 * 60 * 1000;
 const PRODUCT_FALLBACK_IMAGE =
   'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=300&q=80';
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -78,11 +84,31 @@ const escapeHtml = (value = '') =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+const getSavedCartRemainingLabel = (expiresAt) => {
+  const expiresTs = new Date(expiresAt).getTime();
+  if (!Number.isFinite(expiresTs)) return 'Expira pronto';
+  const remainingMs = expiresTs - Date.now();
+  if (remainingMs <= 0) return 'Expirado';
+  const hours = Math.ceil(remainingMs / (60 * 60 * 1000));
+  if (hours >= 24) return `${Math.ceil(hours / 24)}d`;
+  return `${hours}h`;
+};
+const toSavedCartInitials = (value = '') => {
+  const words = String(value || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!words.length) return 'CT';
+  return words
+    .slice(0, 2)
+    .map((word) => word.slice(0, 1).toUpperCase())
+    .join('');
+};
 
 export default function Pedido() {
   const router = useRouter();
   const isFocused = useIsFocused();
-  const { cart, addToCart, removeFromCart, updateCartItemQuantity, clearCart, getTotal } = useCart();
+  const { cart, addToCart, removeFromCart, updateCartItemQuantity, clearCart, replaceCart, getTotal } = useCart();
   const [quantityDrafts, setQuantityDrafts] = useState({});
   const [checkoutModalVisible, setCheckoutModalVisible] = useState(false);
   const [deliveryDate, setDeliveryDate] = useState('');
@@ -91,6 +117,10 @@ export default function Pedido() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [submittingOrder, setSubmittingOrder] = useState(false);
   const [sharingPdf, setSharingPdf] = useState(false);
+  const [savedCarts, setSavedCarts] = useState([]);
+  const [loadingSavedCarts, setLoadingSavedCarts] = useState(false);
+  const [savingCart, setSavingCart] = useState(false);
+  const [savedCartsModalVisible, setSavedCartsModalVisible] = useState(false);
   const [swipeHintReady, setSwipeHintReady] = useState(false);
   const swipeableRefs = useRef(new Map());
   const swipeHintPlayedRef = useRef(false);
@@ -253,6 +283,155 @@ export default function Pedido() {
 
     return () => clearTimeout(openTimer);
   }, [isFocused, swipeHintReady, cart]);
+
+  const loadSavedCarts = useCallback(async () => {
+    try {
+      setLoadingSavedCarts(true);
+      await removeExpiredSavedOrderCarts();
+      const { data, error } = await fetchSavedOrderCarts();
+      if (error) throw error;
+      setSavedCarts(Array.isArray(data) ? data : []);
+    } catch (_error) {
+      setSavedCarts([]);
+    } finally {
+      setLoadingSavedCarts(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isFocused) return;
+    loadSavedCarts().catch(() => {});
+  }, [isFocused, loadSavedCarts]);
+
+  const performSaveCurrentCart = useCallback(async () => {
+    if (cart.length === 0) {
+      Alert.alert('Carrito vacio', 'Agrega productos antes de guardar un carrito.');
+      return;
+    }
+    if (hasMixedClients) {
+      Alert.alert('Carrito invalido', 'Para guardar, el carrito debe tener productos de un solo cliente.');
+      return;
+    }
+    if (savedCarts.length >= MAX_SAVED_CARTS) {
+      Alert.alert('Limite alcanzado', 'Solo puedes guardar hasta 3 carritos. Elimina uno para continuar.');
+      return;
+    }
+
+    try {
+      setSavingCart(true);
+      const { error } = await createSavedOrderCart({
+        customerCode: orderCustomerCode,
+        customerName: orderCustomerName,
+        cartPayload: cart,
+        itemCount: cart.length,
+        totalAmount: getTotal()
+      });
+      if (error) throw error;
+      await loadSavedCarts();
+      Alert.alert('Carrito guardado', 'Tu carrito se guardo por 48 horas.');
+    } catch (error) {
+      const rawMessage = String(error?.message || '').toUpperCase();
+      if (rawMessage.includes('MAX_SAVED_CARTS_REACHED')) {
+        Alert.alert('Limite alcanzado', 'Solo puedes guardar hasta 3 carritos. Elimina uno para continuar.');
+        return;
+      }
+      Alert.alert('Error', 'No se pudo guardar el carrito. Intenta nuevamente.');
+    } finally {
+      setSavingCart(false);
+    }
+  }, [cart, hasMixedClients, savedCarts.length, orderCustomerCode, orderCustomerName, getTotal, loadSavedCarts]);
+
+  const handleSaveCartPress = useCallback(() => {
+    const expiresText = new Date(Date.now() + SAVED_CART_TTL_MS).toLocaleString('es-PA', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    const confirmMessage = `Quieres agregar este carrito a guardados?\nExpira: ${expiresText}`;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      if (window.confirm(confirmMessage)) {
+        performSaveCurrentCart();
+      }
+      return;
+    }
+
+    Alert.alert('Guardar carrito', confirmMessage, [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Guardar', onPress: performSaveCurrentCart }
+    ]);
+  }, [performSaveCurrentCart]);
+
+  const restoreSavedCart = useCallback(
+    (savedCart) => {
+      const rawItems = Array.isArray(savedCart?.cart_payload) ? savedCart.cart_payload : [];
+      if (!rawItems.length) {
+        Alert.alert('Carrito vacio', 'Este carrito guardado ya no tiene lineas validas.');
+        return;
+      }
+
+      replaceCart(rawItems);
+      setCheckoutModalVisible(false);
+      setShowDatePicker(false);
+      Alert.alert('Carrito restaurado', 'Se monto el carrito guardado en el pedido activo.');
+    },
+    [replaceCart]
+  );
+
+  const handleOpenSavedCart = useCallback(
+    (savedCart) => {
+      const customerLabel = String(savedCart?.customer_name || savedCart?.customer_code || 'cliente').trim();
+      const title = 'Cargar carrito';
+      const message = `Quieres montar el carrito guardado de ${customerLabel}?`;
+
+      if (cart.length > 0) {
+        Alert.alert(title, `${message}\nEl carrito activo sera reemplazado.`, [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Cargar', onPress: () => restoreSavedCart(savedCart) }
+        ]);
+        return;
+      }
+
+      Alert.alert(title, message, [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Cargar', onPress: () => restoreSavedCart(savedCart) }
+      ]);
+    },
+    [cart.length, restoreSavedCart]
+  );
+
+  const handleDeleteSavedCart = useCallback(
+    (savedCart) => {
+      const runDelete = async () => {
+        const { error } = await deleteSavedOrderCart(savedCart?.id);
+        if (error) {
+          Alert.alert('Error', 'No se pudo eliminar el carrito guardado.');
+          return;
+        }
+        await loadSavedCarts();
+      };
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        if (window.confirm('Eliminar este carrito guardado?')) {
+          runDelete();
+        }
+        return;
+      }
+
+      Alert.alert('Eliminar carrito', 'Eliminar este carrito guardado?', [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Eliminar', style: 'destructive', onPress: runDelete }
+      ]);
+    },
+    [loadSavedCarts]
+  );
+
+  const handleOpenSavedCartsFromEmpty = useCallback(async () => {
+    await loadSavedCarts();
+    setSavedCartsModalVisible(true);
+  }, [loadSavedCarts]);
 
   const handleConfirmarPedido = async () => {
     if (cart.length === 0) {
@@ -629,6 +808,77 @@ export default function Pedido() {
     );
   };
 
+  const renderSavedCartStories = ({ disableSave = false, hideSave = false } = {}) => (
+    <View style={styles.savedStoriesWrap}>
+      <View style={styles.savedStoriesHeader}>
+        <Text style={styles.savedStoriesTitle}>Carritos guardados</Text>
+        <Text style={styles.savedStoriesHint}>Max {MAX_SAVED_CARTS} · 48h</Text>
+      </View>
+
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.savedStoriesList}>
+        {!hideSave && (
+          <Pressable
+            style={[styles.storyItem, (savingCart || disableSave) && styles.storyItemDisabled]}
+            onPress={handleSaveCartPress}
+            disabled={savingCart || disableSave}
+          >
+            <LinearGradient colors={['#1B6EC9', '#0B4C90']} style={styles.storyRing}>
+              <View style={styles.storyInner}>
+                {savingCart ? (
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                ) : (
+                  <Ionicons name="add" size={22} color={COLORS.primary} />
+                )}
+              </View>
+            </LinearGradient>
+            <Text style={styles.storyLabel} numberOfLines={1}>
+              Guardar +
+            </Text>
+          </Pressable>
+        )}
+
+        {loadingSavedCarts ? (
+          <View style={styles.savedLoadingWrap}>
+            <ActivityIndicator size="small" color={COLORS.primary} />
+          </View>
+        ) : savedCarts.length === 0 ? (
+          <View style={styles.savedEmptyWrap}>
+            <Text style={styles.savedEmptyText}>No hay carritos guardados</Text>
+          </View>
+        ) : (
+          savedCarts.map((savedCart) => {
+            const customerLabel = String(savedCart?.customer_name || savedCart?.customer_code || 'Sin cliente').trim();
+            const remaining = getSavedCartRemainingLabel(savedCart?.expires_at);
+            const initials = toSavedCartInitials(customerLabel);
+            return (
+              <Pressable key={savedCart.id} style={styles.storyItem} onPress={() => handleOpenSavedCart(savedCart)}>
+                <LinearGradient colors={['#FEBE4A', '#F0792A']} style={styles.storyRing}>
+                  <View style={styles.storyInner}>
+                    <Text style={styles.storyInitials}>{initials}</Text>
+                  </View>
+                </LinearGradient>
+                <Text style={styles.storyLabel} numberOfLines={1}>
+                  {customerLabel}
+                </Text>
+                <Text style={styles.storyMeta}>{remaining}</Text>
+                <Pressable
+                  style={styles.storyDeleteBtn}
+                  onPress={(event) => {
+                    event?.stopPropagation?.();
+                    handleDeleteSavedCart(savedCart);
+                  }}
+                  hitSlop={6}
+                >
+                  <Ionicons name="close-circle" size={16} color="#B22A2A" />
+                </Pressable>
+              </Pressable>
+            );
+          })
+        )}
+      </ScrollView>
+    </View>
+  );
+
   const handleShareCartPdf = useCallback(async () => {
     if (cart.length === 0) {
       Alert.alert('Carrito vacio', 'No hay productos para compartir.');
@@ -819,6 +1069,14 @@ export default function Pedido() {
             <Button mode="contained" buttonColor={COLORS.primary} style={styles.emptyButton} onPress={() => router.push('/catalogo')}>
               IR AL CATALOGO
             </Button>
+            <Button
+              mode="outlined"
+              textColor={COLORS.primary}
+              style={styles.emptySecondaryButton}
+              onPress={handleOpenSavedCartsFromEmpty}
+            >
+              IR A CARRITOS GUARDADOS
+            </Button>
           </View>
         </LinearGradient>
       ) : (
@@ -837,21 +1095,33 @@ export default function Pedido() {
               </View>
               <View style={styles.topPanelActions}>
                 <Text style={styles.topPanelTotal}>${getTotal().toFixed(2)}</Text>
-                <Pressable
-                  onPress={handleShareCartPdf}
-                  onPressIn={handleSharePressIn}
-                  onPressOut={handleSharePressOut}
-                  disabled={sharingPdf}
-                  style={styles.topPanelShareBtn}
-                >
-                  <Animated.View style={[styles.topPanelShareContent, { transform: [{ scale: sharePressAnim }] }]}>
-                    {sharingPdf ? (
-                      <ActivityIndicator size="small" color="#FFF" />
-                    ) : (
-                      <Ionicons name="share-outline" size={18} color="#FFF" />
-                    )}
-                  </Animated.View>
-                </Pressable>
+                <View style={styles.topPanelQuickActions}>
+                  <Pressable onPress={handleSaveCartPress} disabled={savingCart} style={styles.topPanelShareBtn}>
+                    <View style={styles.topPanelShareContent}>
+                      {savingCart ? (
+                        <ActivityIndicator size="small" color="#FFF" />
+                      ) : (
+                        <Ionicons name="cart" size={15} color="#FFF" />
+                      )}
+                      {!savingCart && <Ionicons name="add" size={12} color="#FFF" style={styles.cartPlusBadge} />}
+                    </View>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleShareCartPdf}
+                    onPressIn={handleSharePressIn}
+                    onPressOut={handleSharePressOut}
+                    disabled={sharingPdf}
+                    style={styles.topPanelShareBtn}
+                  >
+                    <Animated.View style={[styles.topPanelShareContent, { transform: [{ scale: sharePressAnim }] }]}>
+                      {sharingPdf ? (
+                        <ActivityIndicator size="small" color="#FFF" />
+                      ) : (
+                        <Ionicons name="share-outline" size={18} color="#FFF" />
+                      )}
+                    </Animated.View>
+                  </Pressable>
+                </View>
               </View>
             </View>
             {hasMixedClients && (
@@ -861,6 +1131,7 @@ export default function Pedido() {
               </View>
             )}
           </LinearGradient>
+          <View style={styles.savedStoriesInlineWrap}>{renderSavedCartStories()}</View>
 
           {hasMixedClients && (
             <View style={styles.mixedClientAlert}>
@@ -903,6 +1174,25 @@ export default function Pedido() {
           </View>
         </>
       )}
+
+      <Modal
+        visible={savedCartsModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSavedCartsModalVisible(false)}
+      >
+        <Pressable style={styles.checkoutBackdrop} onPress={() => setSavedCartsModalVisible(false)}>
+          <View style={styles.savedCartsModalWrap}>
+            <Pressable style={styles.savedCartsModalPanel} onPress={(event) => event.stopPropagation()}>
+              <View style={styles.savedCartsModalHeader}>
+                <Text style={styles.savedCartsModalTitle}>Carritos guardados</Text>
+                <IconButton icon="close" size={18} onPress={() => setSavedCartsModalVisible(false)} />
+              </View>
+              {renderSavedCartStories({ disableSave: cart.length === 0 && savedCarts.length === 0, hideSave: true })}
+            </Pressable>
+          </View>
+        </Pressable>
+      </Modal>
 
       <Modal
         visible={checkoutModalVisible}
@@ -1069,9 +1359,9 @@ const styles = StyleSheet.create({
   topPanelLabel: { color: '#D9EBFF', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
   topPanelValue: { marginTop: 2, color: '#FFF', fontSize: 13, fontWeight: '800' },
   topPanelActions: { alignItems: 'flex-end' },
+  topPanelQuickActions: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
   topPanelTotal: { color: '#FFF', fontSize: 18, fontWeight: '800' },
   topPanelShareBtn: {
-    marginTop: 6,
     width: 34,
     height: 34,
     borderRadius: 17,
@@ -1085,7 +1375,109 @@ const styles = StyleSheet.create({
     width: 18,
     height: 18,
     alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative'
+  },
+  cartPlusBadge: {
+    position: 'absolute',
+    right: -5,
+    top: -4
+  },
+  savedStoriesInlineWrap: {
+    marginHorizontal: 12,
+    marginTop: 8
+  },
+  savedStoriesWrap: {
+    width: '100%',
+    marginHorizontal: 0,
+    marginTop: 0,
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 10
+  },
+  savedStoriesHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8
+  },
+  savedStoriesTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: COLORS.primary
+  },
+  savedStoriesHint: {
+    fontSize: 11,
+    color: COLORS.textLight,
+    fontWeight: '700'
+  },
+  savedStoriesList: {
+    paddingRight: 8,
+    gap: 10
+  },
+  storyItem: {
+    width: 74,
+    alignItems: 'center',
+    position: 'relative'
+  },
+  storyItemDisabled: {
+    opacity: 0.45
+  },
+  storyRing: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    alignItems: 'center',
     justifyContent: 'center'
+  },
+  storyInner: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#FFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E6EDF7'
+  },
+  storyInitials: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: COLORS.primary
+  },
+  storyLabel: {
+    marginTop: 5,
+    fontSize: 11,
+    color: COLORS.text,
+    fontWeight: '700',
+    textAlign: 'center',
+    width: '100%'
+  },
+  storyMeta: {
+    fontSize: 10,
+    color: COLORS.textLight,
+    marginTop: 2,
+    fontWeight: '700'
+  },
+  storyDeleteBtn: {
+    position: 'absolute',
+    top: -1,
+    right: 6
+  },
+  savedLoadingWrap: {
+    width: 62,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  savedEmptyWrap: {
+    minHeight: 62,
+    justifyContent: 'center'
+  },
+  savedEmptyText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.textLight
   },
   topPanelWarning: {
     marginTop: 10,
@@ -1297,5 +1689,30 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { fontSize: 22, color: COLORS.primary, fontWeight: '800', textAlign: 'center' },
   emptyText: { fontSize: 14, color: COLORS.textLight, marginTop: 10, textAlign: 'center', lineHeight: 21 },
-  emptyButton: { marginTop: 20, borderRadius: 10, width: '100%' }
+  emptyButton: { marginTop: 20, borderRadius: 10, width: '100%' },
+  emptySecondaryButton: { marginTop: 10, borderRadius: 10, width: '100%', borderColor: COLORS.primary },
+  savedCartsModalWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 18
+  },
+  savedCartsModalPanel: {
+    width: '100%',
+    maxWidth: 520,
+    borderRadius: 16,
+    backgroundColor: '#FFF',
+    padding: 10
+  },
+  savedCartsModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 6
+  },
+  savedCartsModalTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: COLORS.primary
+  }
 });
