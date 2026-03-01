@@ -115,6 +115,7 @@ export const fetchSellerNamesByIds = async (sellerIds = []) => {
 };
 
 export const fetchAdminSellerStats = async () => supabase.rpc('get_admin_seller_stats');
+export const fetchAdminDashboardKpis = async () => supabase.rpc('get_admin_dashboard_kpis');
 export const fetchQueueHealth = async () => supabase.from('vw_sales_orders_queue_health').select('*').maybeSingle();
 
 export const probeEnvironmentHealth = async () =>

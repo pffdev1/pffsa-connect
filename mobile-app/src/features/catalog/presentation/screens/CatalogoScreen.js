@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../../../shared/infrastructure/supabaseClient';
-import { getCachedJson, setCachedJson } from '../../../../shared/infrastructure/offlineService';
+import { cleanupCachedPrefix, getCachedJson, setCachedJson } from '../../../../shared/infrastructure/offlineService';
 import { APP_LAYOUT, COLORS, GLOBAL_STYLES } from '../../../../constants/theme';
 import { useCart } from '../../../../shared/state/cart/CartContext';
 import ProductGrid from '../../../../components/ProductGrid';
@@ -18,6 +18,9 @@ const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 260;
 const QUERY_TIMEOUT_MS = 12000;
 const CATALOG_RESET_ON_FOCUS_KEY = 'catalog:reset-client-on-focus:v1';
+const CATALOG_CACHE_KEY_PREFIX = 'offline:catalogo:first_page:';
+const CATALOG_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const CATALOG_CACHE_MAX_KEYS = 20;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const sanitizeSearchTerm = (value = '') =>
   value
@@ -111,6 +114,7 @@ export default function Catalogo() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [gridEpoch, setGridEpoch] = useState(0);
+  const catalogRequestSeqRef = useRef(0);
   const pendingClientSwitchRef = useRef('');
 
   useEffect(() => {
@@ -169,8 +173,14 @@ export default function Catalogo() {
     };
   }, [isFocused, router]);
 
+  useEffect(() => {
+    if (!isFocused) return;
+    cleanupCachedPrefix({ prefix: CATALOG_CACHE_KEY_PREFIX, maxEntries: CATALOG_CACHE_MAX_KEYS }).catch(() => {});
+  }, [isFocused]);
+
   const fetchProductos = useCallback(
     async ({ reset = false, searchTerm = debouncedSearch, showConnectionAlert = false } = {}) => {
+      const requestSeq = ++catalogRequestSeqRef.current;
       if (!safeCardCode || (!reset && (!hasMore || loadingMore))) return;
 
       const startedAt = Date.now();
@@ -236,21 +246,27 @@ export default function Catalogo() {
 
         const rawChunk = data || [];
         const chunk = normalizeCatalogRows(rawChunk);
+        if (requestSeq !== catalogRequestSeqRef.current) return;
         const elapsed = Date.now() - startedAt;
         if (reset && elapsed < MIN_SKELETON_MS) {
           await wait(MIN_SKELETON_MS - elapsed);
         }
+        if (requestSeq !== catalogRequestSeqRef.current) return;
 
         setItems((prev) => normalizeCatalogRows(reset ? chunk : [...(prev || []), ...chunk]));
         setHasMore(rawChunk.length === PAGE_SIZE);
         setNextFrom(from + rawChunk.length);
         if (reset && !normalizedSearch) {
-          await setCachedJson(`offline:catalogo:first_page:${safeCardCode}`, chunk);
+          await setCachedJson(`${CATALOG_CACHE_KEY_PREFIX}${safeCardCode}`, chunk, { ttlMs: CATALOG_CACHE_TTL_MS });
+          await cleanupCachedPrefix({ prefix: CATALOG_CACHE_KEY_PREFIX, maxEntries: CATALOG_CACHE_MAX_KEYS });
         }
       } catch (error) {
         console.error('Error cargando productos:', error.message);
         if (reset) {
-          const cached = await getCachedJson(`offline:catalogo:first_page:${safeCardCode}`, []);
+          if (requestSeq !== catalogRequestSeqRef.current) return;
+          const cached = await getCachedJson(`${CATALOG_CACHE_KEY_PREFIX}${safeCardCode}`, [], {
+            maxAgeMs: CATALOG_CACHE_TTL_MS
+          });
           if (Array.isArray(cached) && cached.length > 0) {
             setItems(cached);
             setHasMore(false);
@@ -271,6 +287,7 @@ export default function Catalogo() {
           }
         }
       } finally {
+        if (requestSeq !== catalogRequestSeqRef.current) return;
         setLoadingMore(false);
       }
     },

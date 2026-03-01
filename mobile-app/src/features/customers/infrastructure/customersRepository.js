@@ -10,7 +10,6 @@ const buildCustomersQuery = ({ from, to, searchTerm = '' }) => {
     .not('Nivel', 'ilike', 'EMPLEADOS')
     .order('CardName', { ascending: true })
     .order('CardCode', { ascending: true })
-    .order('Nivel', { ascending: true })
     .range(from, to);
 
   if (searchTerm) {

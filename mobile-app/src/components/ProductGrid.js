@@ -62,7 +62,7 @@ export default function ProductGrid({
       maxToRenderPerBatch={8}
       updateCellsBatchingPeriod={50}
       windowSize={7}
-      removeClippedSubviews={Platform.OS === 'android' ? false : true}
+      removeClippedSubviews={Platform.OS !== 'web'}
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
       onScrollBeginDrag={Keyboard.dismiss}

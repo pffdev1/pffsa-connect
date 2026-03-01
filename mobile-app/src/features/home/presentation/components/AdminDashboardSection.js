@@ -23,11 +23,30 @@ export default function AdminDashboardSection({
   const errorRateToneText = errorRateTone === 'danger' ? 'Alta' : errorRateTone === 'warn' ? 'Media' : 'Baja';
   const formatCompactMoney = (value) => {
     const amount = Number(value || 0);
-    if (!Number.isFinite(amount)) return '$0.0k';
-    if (Math.abs(amount) >= 10000) {
-      return `$${(amount / 1000).toFixed(1)}k`;
-    }
-    return toMoney(amount);
+    if (!Number.isFinite(amount)) return '$0.00';
+    const sign = amount < 0 ? '-' : '';
+    const absolute = Math.abs(amount);
+    if (absolute < 1000) return `${sign}$${absolute.toFixed(2)}`;
+    return `${sign}$${(absolute / 1000).toFixed(1)}K`;
+  };
+  const getDeltaTrend = (value) => {
+    const safe = Number(value || 0);
+    if (!Number.isFinite(safe) || safe === 0) return { icon: 'remove', text: 'Igual que ayer', tone: 'neutral' };
+    if (safe > 0) return { icon: 'arrow-up', text: `+${safe} vs ayer`, tone: 'up' };
+    return { icon: 'arrow-down', text: `${safe} vs ayer`, tone: 'down' };
+  };
+  const getSalesDeltaTrend = (value) => {
+    const safe = Number(value || 0);
+    if (!Number.isFinite(safe) || safe === 0) return { icon: 'remove', text: 'Hoy vs ayer: sin cambio', tone: 'neutral' };
+    if (safe > 0) return { icon: 'arrow-up', text: `Hoy vs ayer: +${formatCompactMoney(safe)}`, tone: 'up' };
+    return { icon: 'arrow-down', text: `Hoy vs ayer: ${formatCompactMoney(safe)}`, tone: 'down' };
+  };
+  const ordersTrend = getDeltaTrend(adminKpis.ordersTodayDelta);
+  const salesTrend = getSalesDeltaTrend(adminKpis.salesTodayVsYesterdayDelta);
+  const getTrendColor = (tone) => {
+    if (tone === 'up') return '#27AE60';
+    if (tone === 'down') return '#E74C3C';
+    return '#6B7280';
   };
 
   return (
@@ -39,7 +58,16 @@ export default function AdminDashboardSection({
           </View>
           <Text style={styles.kpiLabel}>Pedidos hoy</Text>
           <Text style={styles.kpiValue}>{loading ? '...' : adminKpis.ordersToday}</Text>
-          <Text style={styles.kpiHint}>Global hoy</Text>
+          <View style={styles.kpiTrendRow}>
+            <Ionicons
+              name={loading ? 'remove' : ordersTrend.icon}
+              size={12}
+              color={loading ? '#6B7280' : getTrendColor(ordersTrend.tone)}
+            />
+            <Text style={[styles.kpiHint, styles.kpiHintTrend, { color: loading ? '#6B7280' : getTrendColor(ordersTrend.tone) }]}>
+              {loading ? '...' : ordersTrend.text}
+            </Text>
+          </View>
         </Pressable>
         <Pressable style={[styles.kpiCard]} onPress={handleOpenSalesSummary}>
           <View style={styles.kpiIconWrap}>
@@ -47,7 +75,16 @@ export default function AdminDashboardSection({
           </View>
           <Text style={styles.kpiLabel}>Ventas totales</Text>
           <Text style={styles.kpiValue}>{loading ? '...' : formatCompactMoney(adminKpis.salesGlobalTotal || 0)}</Text>
-          <Text style={styles.kpiHint}>Global total</Text>
+          <View style={styles.kpiTrendRow}>
+            <Ionicons
+              name={loading ? 'remove' : salesTrend.icon}
+              size={12}
+              color={loading ? '#6B7280' : getTrendColor(salesTrend.tone)}
+            />
+            <Text style={[styles.kpiHint, styles.kpiHintTrend, { color: loading ? '#6B7280' : getTrendColor(salesTrend.tone) }]}>
+              {loading ? '...' : salesTrend.text}
+            </Text>
+          </View>
         </Pressable>
       </View>
 

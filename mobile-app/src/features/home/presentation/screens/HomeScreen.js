@@ -57,7 +57,9 @@ export default function HomeScreen() {
   const [loadingSalesSummary, setLoadingSalesSummary] = useState(false);
   const [adminKpis, setAdminKpis] = useState({
     ordersToday: 0,
+    ordersTodayDelta: 0,
     salesToday: 0,
+    salesTodayVsYesterdayDelta: 0,
     salesGlobalTotal: 0,
     activeSellers: 0,
     pendingOrders: 0,
@@ -105,7 +107,9 @@ export default function HomeScreen() {
     } catch (_error) {
       setAdminKpis({
         ordersToday: 0,
+        ordersTodayDelta: 0,
         salesToday: 0,
+        salesTodayVsYesterdayDelta: 0,
         salesGlobalTotal: 0,
         activeSellers: 0,
         pendingOrders: 0,
@@ -623,6 +627,8 @@ const styles = StyleSheet.create({
   kpiValueWarn: { color: '#F39C12' },
   kpiValueDanger: { color: '#E74C3C' },
   kpiHint: { marginTop: 'auto', color: COLORS.textLight, fontSize: 11, fontWeight: '600' },
+  kpiTrendRow: { marginTop: 'auto', flexDirection: 'row', alignItems: 'center', gap: 4 },
+  kpiHintTrend: { marginTop: 0, flexShrink: 1 },
   block: {
     borderRadius: 14,
     padding: 12,

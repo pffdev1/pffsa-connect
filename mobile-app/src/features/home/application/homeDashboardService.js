@@ -9,6 +9,7 @@ import {
   resolveOrderTotal
 } from '../domain/homeDomain';
 import {
+  fetchAdminDashboardKpis,
   fetchAdminSellerStats,
   fetchAllOrders,
   fetchAuthUser,
@@ -61,15 +62,41 @@ export const loadVendorKpis = async (userId) => {
   };
 };
 
-export const loadAdminDashboardData = async () => {
+const loadAdminKpisFallbackLegacy = async () => {
   const { fromIso, toIso } = buildTodayQueryRange();
+  const yesterdayStart = new Date();
+  yesterdayStart.setHours(0, 0, 0, 0);
+  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+  const yesterdayEnd = new Date(yesterdayStart);
+  yesterdayEnd.setDate(yesterdayEnd.getDate() + 1);
+  const yesterdayFromIso = yesterdayStart.toISOString();
+  const yesterdayToIso = yesterdayEnd.toISOString();
+
   const { data: todayOrdersRows, error: todayOrdersError } = await fetchOrdersInRange({ fromIso, toIso, limit: 3000 });
   if (todayOrdersError) throw todayOrdersError;
   const { count: todayOrdersCount, error: todayCountError } = await fetchOrdersCountInRange({ fromIso, toIso });
   if (todayCountError) throw todayCountError;
+  const { count: yesterdayOrdersCount, error: yesterdayCountError } = await fetchOrdersCountInRange({
+    fromIso: yesterdayFromIso,
+    toIso: yesterdayToIso
+  });
+  if (yesterdayCountError) throw yesterdayCountError;
+
   const filteredTodayOrders = keepTodayOrders(todayOrdersRows || []);
   const todayOrderIds = filteredTodayOrders.map((row) => String(row?.id || '').trim()).filter(Boolean);
+  const { data: yesterdayOrdersRows, error: yesterdayOrdersError } = await fetchOrdersInRange({
+    fromIso: yesterdayFromIso,
+    toIso: yesterdayToIso,
+    limit: 3000
+  });
+  if (yesterdayOrdersError) throw yesterdayOrdersError;
+
   const { data: todayLinesRows } = await fetchLinesByOrderIds(todayOrderIds);
+  const yesterdayOrderIds = (yesterdayOrdersRows || []).map((row) => String(row?.id || '').trim()).filter(Boolean);
+  const { data: yesterdayLinesRows } = await fetchLinesByOrderIds(yesterdayOrderIds);
+  const salesToday = resolveOrderTotal(todayLinesRows || []);
+  const salesYesterday = resolveOrderTotal(yesterdayLinesRows || []);
+
   let salesGlobalTotal = 0;
   try {
     const { data: allOrdersRows, error: allOrdersError } = await fetchAllOrders();
@@ -82,6 +109,43 @@ export const loadAdminDashboardData = async () => {
     }
   } catch (_error) {
     salesGlobalTotal = 0;
+  }
+
+  return {
+    todayOrdersCount,
+    yesterdayOrdersCount,
+    salesToday,
+    salesYesterday,
+    salesGlobalTotal
+  };
+};
+
+export const loadAdminDashboardData = async () => {
+  let todayOrdersCount = 0;
+  let yesterdayOrdersCount = 0;
+  let salesToday = 0;
+  let salesYesterday = 0;
+  let salesGlobalTotal = 0;
+
+  try {
+    const {
+      data: kpiRows,
+      error: kpiError
+    } = await fetchAdminDashboardKpis();
+    if (kpiError) throw kpiError;
+    const kpiRow = Array.isArray(kpiRows) ? kpiRows[0] : kpiRows || {};
+    todayOrdersCount = Number(kpiRow?.orders_today || 0);
+    yesterdayOrdersCount = Number(kpiRow?.orders_yesterday || 0);
+    salesToday = Number(kpiRow?.sales_today || 0);
+    salesYesterday = Number(kpiRow?.sales_yesterday || 0);
+    salesGlobalTotal = Number(kpiRow?.sales_global_total || 0);
+  } catch (_rpcError) {
+    const legacy = await loadAdminKpisFallbackLegacy();
+    todayOrdersCount = Number(legacy?.todayOrdersCount || 0);
+    yesterdayOrdersCount = Number(legacy?.yesterdayOrdersCount || 0);
+    salesToday = Number(legacy?.salesToday || 0);
+    salesYesterday = Number(legacy?.salesYesterday || 0);
+    salesGlobalTotal = Number(legacy?.salesGlobalTotal || 0);
   }
 
   let sellerRows = [];
@@ -174,7 +238,9 @@ export const loadAdminDashboardData = async () => {
   return {
     adminKpis: {
       ordersToday: todayOrdersCount,
-      salesToday: resolveOrderTotal(todayLinesRows || []),
+      ordersTodayDelta: Number(todayOrdersCount || 0) - Number(yesterdayOrdersCount || 0),
+      salesToday,
+      salesTodayVsYesterdayDelta: salesToday - salesYesterday,
       salesGlobalTotal,
       activeSellers: summary.activeSellers,
       pendingOrders: summary.pendingOrders,

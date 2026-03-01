@@ -9,7 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { clearLocalSupabaseSession, isInvalidRefreshTokenError } from '../../../../shared/infrastructure/supabaseClient';
-import { getCachedJson, setCachedJson } from '../../../../shared/infrastructure/offlineService';
+import { cleanupCachedPrefix, getCachedJson, setCachedJson } from '../../../../shared/infrastructure/offlineService';
 import { useCart } from '../../../../shared/state/cart/CartContext';
 import { APP_LAYOUT, COLORS } from '../../../../constants/theme';
 import CustomerGrid from '../components/CustomerGrid';
@@ -24,8 +24,6 @@ import { isConnectionLikeError, withTimeout } from '../../application/customersQ
 import {
   deriveProfileName,
   isClientBlocked,
-  matchesSearchTerm,
-  normalizeSellerName,
   sanitizeSearchTerm
 } from '../../domain/customerRules';
 
@@ -33,6 +31,9 @@ const PAGE_SIZE = 50;
 const MIN_SKELETON_MS = 700;
 const SEARCH_DEBOUNCE_MS = 280;
 const CATALOG_RESET_ON_FOCUS_KEY = 'catalog:reset-client-on-focus:v1';
+const CUSTOMERS_CACHE_KEY_PREFIX = 'offline:clientes:first_page:';
+const CUSTOMERS_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+const CUSTOMERS_CACHE_MAX_KEYS = 6;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default function Clientes() {
@@ -51,6 +52,8 @@ export default function Clientes() {
   const [authUserId, setAuthUserId] = useState('');
   const isMounted = useRef(true);
   const clientesRef = useRef([]);
+  const customersIndexRef = useRef(new Map());
+  const customersRequestSeqRef = useRef(0);
   const realtimeErrorRef = useRef('');
   const isLoadingMoreRef = useRef(false);
   const hasInitializedSearchRef = useRef(false);
@@ -99,6 +102,7 @@ export default function Clientes() {
       setSelectedClient(null);
       setSearch('');
       setDebouncedSearch('');
+      cleanupCachedPrefix({ prefix: CUSTOMERS_CACHE_KEY_PREFIX, maxEntries: CUSTOMERS_CACHE_MAX_KEYS }).catch(() => {});
     }, [])
   );
 
@@ -148,8 +152,9 @@ export default function Clientes() {
         const nuevos = data || [];
         setClientes(nuevos);
         setHasMore(nuevos.length === PAGE_SIZE);
-        const cacheKey = `offline:clientes:first_page:${user.id}:${nextProfile.role}`;
-        await setCachedJson(cacheKey, nuevos);
+        const cacheKey = `${CUSTOMERS_CACHE_KEY_PREFIX}${user.id}:${nextProfile.role}`;
+        await setCachedJson(cacheKey, nuevos, { ttlMs: CUSTOMERS_CACHE_TTL_MS });
+        await cleanupCachedPrefix({ prefix: CUSTOMERS_CACHE_KEY_PREFIX, maxEntries: CUSTOMERS_CACHE_MAX_KEYS });
       } catch (error) {
         if (!isMounted.current) return;
         const rawMessage = String(error?.message || '').toLowerCase();
@@ -163,8 +168,8 @@ export default function Clientes() {
         } else {
           const userId = String(bootstrapUserId || '').trim();
           const roleKey = String(bootstrapRole || 'vendedor').trim();
-          const cacheKey = userId ? `offline:clientes:first_page:${userId}:${roleKey}` : null;
-          const cached = cacheKey ? await getCachedJson(cacheKey, null) : null;
+          const cacheKey = userId ? `${CUSTOMERS_CACHE_KEY_PREFIX}${userId}:${roleKey}` : null;
+          const cached = cacheKey ? await getCachedJson(cacheKey, null, { maxAgeMs: CUSTOMERS_CACHE_TTL_MS }) : null;
           if (Array.isArray(cached) && cached.length > 0) {
             setClientes(cached);
             setHasMore(false);
@@ -198,10 +203,16 @@ export default function Clientes() {
     const channel = subscribeCustomersRealtime({
       role: profile.role,
       onCustomerUpdated: (payload) => {
-        if (!payload?.new?.CardCode) return;
+        const nextCardCode = String(payload?.new?.CardCode || '').trim();
+        if (!nextCardCode) return;
         setClientes((prev) => {
           if (!Array.isArray(prev)) return prev;
-          return prev.map((item) => (item.CardCode === payload.new.CardCode ? { ...item, ...payload.new } : item));
+          const nextIndex = customersIndexRef.current.get(nextCardCode);
+          if (nextIndex === undefined || nextIndex < 0 || nextIndex >= prev.length) return prev;
+          const updatedRow = { ...prev[nextIndex], ...payload.new };
+          const copy = [...prev];
+          copy[nextIndex] = updatedRow;
+          return copy;
         });
       },
       onStatusChanged: (status, err) => {
@@ -225,6 +236,7 @@ export default function Clientes() {
   }, [profile]);
 
   const fetchClientes = useCallback(async (reset = false, currentProfile = profile, searchTerm = debouncedSearch, showConnectionAlert = false) => {
+    const requestSeq = ++customersRequestSeqRef.current;
     const startedAt = Date.now();
 
     try {
@@ -242,33 +254,32 @@ export default function Clientes() {
       const from = reset ? 0 : clientes?.length || 0;
       const to = from + PAGE_SIZE - 1;
       const querySearch = sanitizeSearchTerm(searchTerm);
-      const normalizedSearch = normalizeSellerName(querySearch);
 
       const { data, error } = await withTimeout(
         fetchCustomersPage({
           from,
           to,
-          searchTerm: normalizedSearch ? querySearch : ''
+          searchTerm: querySearch
         })
       );
       if (error) throw error;
-      if (!isMounted.current) return;
+      if (!isMounted.current || requestSeq !== customersRequestSeqRef.current) return;
 
       if (reset) {
         const elapsed = Date.now() - startedAt;
         if (elapsed < MIN_SKELETON_MS) {
           await wait(MIN_SKELETON_MS - elapsed);
         }
-        if (!isMounted.current) return;
+        if (!isMounted.current || requestSeq !== customersRequestSeqRef.current) return;
       }
 
       const fetchedRows = data || [];
-      const nuevos = fetchedRows.filter((item) => matchesSearchTerm(item, normalizedSearch));
+      const nuevos = fetchedRows;
       setClientes((prev) => (reset ? nuevos : [...(prev || []), ...nuevos]));
       setHasMore(fetchedRows.length === PAGE_SIZE);
     } catch (error) {
       console.error('Error cargando clientes:', error.message);
-      if (!isMounted.current) return;
+      if (!isMounted.current || requestSeq !== customersRequestSeqRef.current) return;
       const connectionError = isConnectionLikeError(error);
       const hasExistingRows = Array.isArray(clientesRef.current) && clientesRef.current.length > 0;
 
@@ -276,8 +287,8 @@ export default function Clientes() {
         if (!hasExistingRows) {
           const userId = String(authUserId || '').trim();
           const roleKey = String(currentProfile?.role || 'vendedor').trim();
-          const cacheKey = userId ? `offline:clientes:first_page:${userId}:${roleKey}` : null;
-          const cached = cacheKey ? await getCachedJson(cacheKey, null) : null;
+          const cacheKey = userId ? `${CUSTOMERS_CACHE_KEY_PREFIX}${userId}:${roleKey}` : null;
+          const cached = cacheKey ? await getCachedJson(cacheKey, null, { maxAgeMs: CUSTOMERS_CACHE_TTL_MS }) : null;
           if (Array.isArray(cached) && cached.length > 0) {
             setClientes(cached);
             setHasMore(false);
@@ -297,7 +308,7 @@ export default function Clientes() {
         );
       }
     } finally {
-      if (!isMounted.current) return;
+      if (!isMounted.current || requestSeq !== customersRequestSeqRef.current) return;
       if (reset) {
         setLoading(false);
       } else {
@@ -309,6 +320,12 @@ export default function Clientes() {
 
   useEffect(() => {
     clientesRef.current = Array.isArray(clientes) ? clientes : [];
+    const nextIndex = new Map();
+    clientesRef.current.forEach((item, index) => {
+      const code = String(item?.CardCode || '').trim();
+      if (code) nextIndex.set(code, index);
+    });
+    customersIndexRef.current = nextIndex;
   }, [clientes]);
 
   useEffect(() => {

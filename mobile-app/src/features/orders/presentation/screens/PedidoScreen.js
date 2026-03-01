@@ -69,6 +69,7 @@ const SWIPE_HINT_SEEN_KEY = 'pedido:swipe-hint-seen:v1';
 const SHARE_PRINT_TIMEOUT_MS = 90000;
 const SHARE_DIALOG_TIMEOUT_MS = 20000;
 const SAVED_CART_TTL_MS = 48 * 60 * 60 * 1000;
+const SAVED_CART_CLOCK_REFRESH_MS = 60 * 1000;
 const PRODUCT_FALLBACK_IMAGE =
   'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=300&q=80';
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -84,14 +85,54 @@ const escapeHtml = (value = '') =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-const getSavedCartRemainingLabel = (expiresAt) => {
+const getSavedCartRemainingLabel = (expiresAt, nowMs = Date.now()) => {
   const expiresTs = new Date(expiresAt).getTime();
   if (!Number.isFinite(expiresTs)) return 'Expira pronto';
-  const remainingMs = expiresTs - Date.now();
+  const remainingMs = expiresTs - nowMs;
   if (remainingMs <= 0) return 'Expirado';
-  const hours = Math.ceil(remainingMs / (60 * 60 * 1000));
-  if (hours >= 24) return `${Math.ceil(hours / 24)}d`;
-  return `${hours}h`;
+  const totalMinutes = Math.ceil(remainingMs / (60 * 1000));
+  if (totalMinutes >= 24 * 60) return `${Math.ceil(totalMinutes / (24 * 60))}d`;
+  if (totalMinutes >= 60) {
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+  return `${totalMinutes}m`;
+};
+const getSavedCartVisualState = (expiresAt, nowMs = Date.now()) => {
+  const expiresTs = new Date(expiresAt).getTime();
+  if (!Number.isFinite(expiresTs)) {
+    return {
+      ringColors: ['#58C472', '#2FAE5E'],
+      textColor: '#2FAE5E'
+    };
+  }
+
+  const remainingMs = expiresTs - nowMs;
+  if (remainingMs <= 0) {
+    return {
+      ringColors: ['#F06969', '#D43F3F'],
+      textColor: '#D43F3F'
+    };
+  }
+
+  const ratio = remainingMs / SAVED_CART_TTL_MS;
+  if (ratio > 0.5) {
+    return {
+      ringColors: ['#58C472', '#2FAE5E'],
+      textColor: '#2FAE5E'
+    };
+  }
+  if (ratio > 0.2) {
+    return {
+      ringColors: ['#F8B44E', '#EC8A1E'],
+      textColor: '#D47A12'
+    };
+  }
+  return {
+    ringColors: ['#F06969', '#D43F3F'],
+    textColor: '#D43F3F'
+  };
 };
 const toSavedCartInitials = (value = '') => {
   const words = String(value || '')
@@ -121,6 +162,8 @@ export default function Pedido() {
   const [loadingSavedCarts, setLoadingSavedCarts] = useState(false);
   const [savingCart, setSavingCart] = useState(false);
   const [savedCartsModalVisible, setSavedCartsModalVisible] = useState(false);
+  const [activeSavedCartId, setActiveSavedCartId] = useState('');
+  const [savedCartsNowMs, setSavedCartsNowMs] = useState(Date.now());
   const [swipeHintReady, setSwipeHintReady] = useState(false);
   const swipeableRefs = useRef(new Map());
   const swipeHintPlayedRef = useRef(false);
@@ -303,6 +346,22 @@ export default function Pedido() {
     loadSavedCarts().catch(() => {});
   }, [isFocused, loadSavedCarts]);
 
+  useEffect(() => {
+    if (!isFocused) return undefined;
+    const timer = setInterval(() => {
+      setSavedCartsNowMs(Date.now());
+    }, SAVED_CART_CLOCK_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [isFocused]);
+
+  useEffect(() => {
+    if (!activeSavedCartId) return;
+    const stillExists = savedCarts.some((row) => String(row?.id || '').trim() === activeSavedCartId);
+    if (!stillExists) {
+      setActiveSavedCartId('');
+    }
+  }, [savedCarts, activeSavedCartId]);
+
   const performSaveCurrentCart = useCallback(async () => {
     if (cart.length === 0) {
       Alert.alert('Carrito vacio', 'Agrega productos antes de guardar un carrito.');
@@ -373,8 +432,10 @@ export default function Pedido() {
       }
 
       replaceCart(rawItems);
+      setActiveSavedCartId(String(savedCart?.id || '').trim());
       setCheckoutModalVisible(false);
       setShowDatePicker(false);
+      setSavedCartsModalVisible(false);
       Alert.alert('Carrito restaurado', 'Se monto el carrito guardado en el pedido activo.');
     },
     [replaceCart]
@@ -382,6 +443,12 @@ export default function Pedido() {
 
   const handleOpenSavedCart = useCallback(
     (savedCart) => {
+      const selectedSavedCartId = String(savedCart?.id || '').trim();
+      if (selectedSavedCartId && selectedSavedCartId === activeSavedCartId) {
+        setSavedCartsModalVisible(false);
+        return;
+      }
+
       const customerLabel = String(savedCart?.customer_name || savedCart?.customer_code || 'cliente').trim();
       const title = 'Cargar carrito';
       const message = `Quieres montar el carrito guardado de ${customerLabel}?`;
@@ -399,7 +466,7 @@ export default function Pedido() {
         { text: 'Cargar', onPress: () => restoreSavedCart(savedCart) }
       ]);
     },
-    [cart.length, restoreSavedCart]
+    [activeSavedCartId, cart.length, restoreSavedCart]
   );
 
   const handleDeleteSavedCart = useCallback(
@@ -409,6 +476,9 @@ export default function Pedido() {
         if (error) {
           Alert.alert('Error', 'No se pudo eliminar el carrito guardado.');
           return;
+        }
+        if (String(savedCart?.id || '').trim() === activeSavedCartId) {
+          setActiveSavedCartId('');
         }
         await loadSavedCarts();
       };
@@ -425,7 +495,7 @@ export default function Pedido() {
         { text: 'Eliminar', style: 'destructive', onPress: runDelete }
       ]);
     },
-    [loadSavedCarts]
+    [activeSavedCartId, loadSavedCarts]
   );
 
   const handleOpenSavedCartsFromEmpty = useCallback(async () => {
@@ -532,6 +602,14 @@ export default function Pedido() {
 
     const sendOrder = async () => {
       let queuedItem = null;
+      const cleanupSavedCartAfterOrder = async () => {
+        if (!activeSavedCartId) return;
+        const { error } = await deleteSavedOrderCart(activeSavedCartId);
+        if (!error) {
+          setActiveSavedCartId('');
+          await loadSavedCarts();
+        }
+      };
       try {
         setSubmittingOrder(true);
         let resolvedZona = String(firstItem.Zona || firstItem.zona || '').trim();
@@ -605,9 +683,11 @@ export default function Pedido() {
 
         setCheckoutModalVisible(false);
         setShowDatePicker(false);
+        setSavedCartsModalVisible(false);
         setDeliveryDate('');
         setSelectedWarehouse('100');
         setOrderComments('');
+        await cleanupSavedCartAfterOrder();
         clearCart();
         const successMessage = sapDocNum
           ? `Pedido ${sapDocNum} guardado exitosamente. Puedes validar todos tus pedidos desde tu perfil.`
@@ -635,6 +715,7 @@ export default function Pedido() {
         }
 
         if (errorCode === 'session_expired') {
+          await cleanupSavedCartAfterOrder();
           openSessionExpiredAlert(`${userMessage} Tu pedido quedo guardado localmente y se enviara cuando vuelvas a iniciar sesion.`);
           return;
         }
@@ -642,9 +723,11 @@ export default function Pedido() {
         if (shouldKeepQueued) {
           setCheckoutModalVisible(false);
           setShowDatePicker(false);
+          setSavedCartsModalVisible(false);
           setDeliveryDate('');
           setSelectedWarehouse('100');
           setOrderComments('');
+          await cleanupSavedCartAfterOrder();
           clearCart();
           Alert.alert('Pedido pendiente', `${userMessage} Puedes validar su estado desde tu perfil.`);
           router.replace('/(tabs)/clientes');
@@ -711,13 +794,22 @@ export default function Pedido() {
   const handleClearCartPress = () => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const confirmed = window.confirm('Borrar todo el carrito?');
-      if (confirmed) clearCart();
+      if (confirmed) {
+        clearCart();
+        setActiveSavedCartId('');
+      }
       return;
     }
 
     Alert.alert('Vaciar', 'Borrar todo el carrito?', [
       { text: 'No' },
-      { text: 'Si', onPress: clearCart }
+      {
+        text: 'Si',
+        onPress: () => {
+          clearCart();
+          setActiveSavedCartId('');
+        }
+      }
     ]);
   };
 
@@ -848,11 +940,12 @@ export default function Pedido() {
         ) : (
           savedCarts.map((savedCart) => {
             const customerLabel = String(savedCart?.customer_name || savedCart?.customer_code || 'Sin cliente').trim();
-            const remaining = getSavedCartRemainingLabel(savedCart?.expires_at);
+            const remaining = getSavedCartRemainingLabel(savedCart?.expires_at, savedCartsNowMs);
+            const visualState = getSavedCartVisualState(savedCart?.expires_at, savedCartsNowMs);
             const initials = toSavedCartInitials(customerLabel);
             return (
               <Pressable key={savedCart.id} style={styles.storyItem} onPress={() => handleOpenSavedCart(savedCart)}>
-                <LinearGradient colors={['#FEBE4A', '#F0792A']} style={styles.storyRing}>
+                <LinearGradient colors={visualState.ringColors} style={styles.storyRing}>
                   <View style={styles.storyInner}>
                     <Text style={styles.storyInitials}>{initials}</Text>
                   </View>
@@ -860,7 +953,7 @@ export default function Pedido() {
                 <Text style={styles.storyLabel} numberOfLines={1}>
                   {customerLabel}
                 </Text>
-                <Text style={styles.storyMeta}>{remaining}</Text>
+                <Text style={[styles.storyMeta, { color: visualState.textColor }]}>{remaining}</Text>
                 <Pressable
                   style={styles.storyDeleteBtn}
                   onPress={(event) => {

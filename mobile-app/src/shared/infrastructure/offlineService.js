@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 
 const ORDER_QUEUE_KEY = 'offline:pending-orders:v1';
 const MAX_QUEUE_ITEMS = 100;
+const CACHE_ENVELOPE_VERSION = 1;
 const OPTIONAL_RPC_PARAMS = ['p_client_order_id', 'p_comments'];
 const RETRYABLE_ERROR_CODES = new Set(['network', 'timeout', 'session_expired', 'server']);
 const ORDER_RETRY_COOLDOWN_MS = 15000;
@@ -17,14 +18,111 @@ const parseJson = (raw, fallback) => {
   }
 };
 
-export const getCachedJson = async (key, fallback = null) => {
+const isCacheEnvelope = (value) =>
+  value &&
+  typeof value === 'object' &&
+  !Array.isArray(value) &&
+  Number(value.__cacheVersion) === CACHE_ENVELOPE_VERSION &&
+  Object.prototype.hasOwnProperty.call(value, 'value');
+
+export const getCachedJson = async (key, fallback = null, options = {}) => {
   const raw = await AsyncStorage.getItem(key);
   if (!raw) return fallback;
-  return parseJson(raw, fallback);
+  const parsed = parseJson(raw, fallback);
+  if (!isCacheEnvelope(parsed)) {
+    return parsed;
+  }
+
+  const expiresAtMs = Number(parsed.expiresAt || 0);
+  if (Number.isFinite(expiresAtMs) && expiresAtMs > 0 && Date.now() > expiresAtMs) {
+    await AsyncStorage.removeItem(key);
+    return fallback;
+  }
+
+  const maxAgeMs = Number(options?.maxAgeMs || 0);
+  if (Number.isFinite(maxAgeMs) && maxAgeMs > 0) {
+    const createdAtMs = Number(parsed.createdAt || 0);
+    if (Number.isFinite(createdAtMs) && createdAtMs > 0 && Date.now() - createdAtMs > maxAgeMs) {
+      await AsyncStorage.removeItem(key);
+      return fallback;
+    }
+  }
+
+  return parsed.value;
 };
 
-export const setCachedJson = async (key, value) => {
-  await AsyncStorage.setItem(key, JSON.stringify(value));
+export const setCachedJson = async (key, value, options = {}) => {
+  const ttlMs = Number(options?.ttlMs || 0);
+  const withEnvelope = Number.isFinite(ttlMs) && ttlMs > 0;
+
+  if (!withEnvelope) {
+    await AsyncStorage.setItem(key, JSON.stringify(value));
+    return;
+  }
+
+  const now = Date.now();
+  const payload = {
+    __cacheVersion: CACHE_ENVELOPE_VERSION,
+    createdAt: now,
+    expiresAt: now + ttlMs,
+    value
+  };
+  await AsyncStorage.setItem(key, JSON.stringify(payload));
+};
+
+export const cleanupCachedPrefix = async ({ prefix = '', maxEntries = 0 } = {}) => {
+  const safePrefix = String(prefix || '').trim();
+  if (!safePrefix) return { removedExpired: 0, removedOverflow: 0, totalKeys: 0 };
+
+  const allKeys = await AsyncStorage.getAllKeys();
+  const scopedKeys = allKeys.filter((key) => String(key || '').startsWith(safePrefix));
+  if (scopedKeys.length === 0) {
+    return { removedExpired: 0, removedOverflow: 0, totalKeys: 0 };
+  }
+
+  const rows = await AsyncStorage.multiGet(scopedKeys);
+  const now = Date.now();
+  const removableExpired = [];
+  const candidates = [];
+
+  rows.forEach(([key, raw]) => {
+    if (!raw) return;
+    const parsed = parseJson(raw, null);
+    if (!isCacheEnvelope(parsed)) {
+      candidates.push({ key, createdAt: 0 });
+      return;
+    }
+
+    const expiresAt = Number(parsed.expiresAt || 0);
+    if (Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= now) {
+      removableExpired.push(key);
+      return;
+    }
+
+    const createdAt = Number(parsed.createdAt || 0);
+    candidates.push({ key, createdAt: Number.isFinite(createdAt) ? createdAt : 0 });
+  });
+
+  if (removableExpired.length > 0) {
+    await AsyncStorage.multiRemove(removableExpired);
+  }
+
+  let removedOverflow = 0;
+  const safeMaxEntries = Number(maxEntries);
+  if (Number.isFinite(safeMaxEntries) && safeMaxEntries > 0 && candidates.length > safeMaxEntries) {
+    const sorted = [...candidates].sort((a, b) => b.createdAt - a.createdAt);
+    const overflow = sorted.slice(safeMaxEntries).map((item) => item.key);
+    if (overflow.length > 0) {
+      await AsyncStorage.multiRemove(overflow);
+      removedOverflow = overflow.length;
+    }
+  }
+
+  return {
+    removedExpired: removableExpired.length,
+    removedOverflow,
+    totalKeys: scopedKeys.length
+  };
 };
 
 const normalizeText = (value) => String(value || '').trim();
