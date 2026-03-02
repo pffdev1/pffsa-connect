@@ -23,6 +23,20 @@ import {
   probeEnvironmentHealth
 } from '../infrastructure/homeRepository';
 
+const getComparisonRange = () => {
+  const now = new Date();
+  const compareStart = new Date(now);
+  compareStart.setHours(0, 0, 0, 0);
+  if (compareStart.getDay() === 1) {
+    compareStart.setDate(compareStart.getDate() - 2);
+  } else {
+    compareStart.setDate(compareStart.getDate() - 1);
+  }
+  const compareEnd = new Date(compareStart);
+  compareEnd.setDate(compareEnd.getDate() + 1);
+  return { fromIso: compareStart.toISOString(), toIso: compareEnd.toISOString() };
+};
+
 export const loadUserContext = async () => {
   const {
     data: { user },
@@ -42,51 +56,69 @@ export const loadUserContext = async () => {
 
 export const loadVendorKpis = async (userId) => {
   const { fromIso, toIso } = buildTodayQueryRange();
+  const { fromIso: compareFromIso, toIso: compareToIso } = getComparisonRange();
   const { data: todayRows, error: todayError } = await fetchOrdersInRange({ fromIso, toIso, createdBy: userId, limit: 1200 });
   if (todayError) throw todayError;
   const todayOrders = keepTodayOrders(todayRows || []);
   const { count: todayCount, error: todayCountError } = await fetchOrdersCountInRange({ fromIso, toIso, createdBy: userId });
   if (todayCountError) throw todayCountError;
+  const { count: yesterdayCount, error: yesterdayCountError } = await fetchOrdersCountInRange({
+    fromIso: compareFromIso,
+    toIso: compareToIso,
+    createdBy: userId
+  });
+  if (yesterdayCountError) throw yesterdayCountError;
 
   const todayOrderIds = Array.from(new Set(todayOrders.map((row) => String(row?.id || '').trim()).filter(Boolean)));
+  const { data: yesterdayRows, error: yesterdayRowsError } = await fetchOrdersInRange({
+    fromIso: compareFromIso,
+    toIso: compareToIso,
+    createdBy: userId,
+    limit: 1200
+  });
+  if (yesterdayRowsError) throw yesterdayRowsError;
+  const yesterdayOrders = yesterdayRows || [];
+  const yesterdayOrderIds = Array.from(new Set(yesterdayOrders.map((row) => String(row?.id || '').trim()).filter(Boolean)));
   let totalSales = 0;
   if (todayOrderIds.length > 0) {
     const { data: linesRows, error: linesError } = await fetchLinesByOrderIds(todayOrderIds);
     if (linesError) throw linesError;
     totalSales = resolveOrderTotal(linesRows || []);
   }
+  let yesterdaySales = 0;
+  if (yesterdayOrderIds.length > 0) {
+    const { data: yesterdayLinesRows, error: yesterdayLinesError } = await fetchLinesByOrderIds(yesterdayOrderIds);
+    if (yesterdayLinesError) throw yesterdayLinesError;
+    yesterdaySales = resolveOrderTotal(yesterdayLinesRows || []);
+  }
 
   return {
     todayOrders: todayCount,
-    totalSales
+    totalSales,
+    todayOrdersDelta: Number(todayCount || 0) - Number(yesterdayCount || 0),
+    salesTodayVsYesterdayDelta: Number(totalSales || 0) - Number(yesterdaySales || 0)
   };
 };
 
 const loadAdminKpisFallbackLegacy = async () => {
   const { fromIso, toIso } = buildTodayQueryRange();
-  const yesterdayStart = new Date();
-  yesterdayStart.setHours(0, 0, 0, 0);
-  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-  const yesterdayEnd = new Date(yesterdayStart);
-  yesterdayEnd.setDate(yesterdayEnd.getDate() + 1);
-  const yesterdayFromIso = yesterdayStart.toISOString();
-  const yesterdayToIso = yesterdayEnd.toISOString();
+  const { fromIso: compareFromIso, toIso: compareToIso } = getComparisonRange();
 
   const { data: todayOrdersRows, error: todayOrdersError } = await fetchOrdersInRange({ fromIso, toIso, limit: 3000 });
   if (todayOrdersError) throw todayOrdersError;
   const { count: todayOrdersCount, error: todayCountError } = await fetchOrdersCountInRange({ fromIso, toIso });
   if (todayCountError) throw todayCountError;
   const { count: yesterdayOrdersCount, error: yesterdayCountError } = await fetchOrdersCountInRange({
-    fromIso: yesterdayFromIso,
-    toIso: yesterdayToIso
+    fromIso: compareFromIso,
+    toIso: compareToIso
   });
   if (yesterdayCountError) throw yesterdayCountError;
 
   const filteredTodayOrders = keepTodayOrders(todayOrdersRows || []);
   const todayOrderIds = filteredTodayOrders.map((row) => String(row?.id || '').trim()).filter(Boolean);
   const { data: yesterdayOrdersRows, error: yesterdayOrdersError } = await fetchOrdersInRange({
-    fromIso: yesterdayFromIso,
-    toIso: yesterdayToIso,
+    fromIso: compareFromIso,
+    toIso: compareToIso,
     limit: 3000
   });
   if (yesterdayOrdersError) throw yesterdayOrdersError;
@@ -348,17 +380,16 @@ export const loadSalesSummaryData = async ({ authUserId, role }) => {
     };
   }
 
-  const { data: allOrders, error: ordersError } = await fetchAllOrders();
+  const [{ data: allOrders, error: ordersError }, { data: kpiRows, error: kpiError }] = await Promise.all([
+    fetchAllOrders(),
+    fetchAdminDashboardKpis()
+  ]);
   if (ordersError) throw ordersError;
-  const allOrderIds = (allOrders || []).map((row) => String(row?.id || '').trim()).filter(Boolean);
-  if (allOrderIds.length === 0) {
-    return { allOrdersCount: 0, allSalesTotal: 0 };
-  }
-  const { data: linesRows, error: linesError } = await fetchLinesByOrderIds(allOrderIds);
-  if (linesError) throw linesError;
+  if (kpiError) throw kpiError;
+  const kpiRow = Array.isArray(kpiRows) ? kpiRows[0] : kpiRows || {};
   return {
-    allOrdersCount: allOrderIds.length,
-    allSalesTotal: resolveOrderTotal(linesRows || [])
+    allOrdersCount: (allOrders || []).length,
+    allSalesTotal: Number(kpiRow?.sales_global_total || 0)
   };
 };
 

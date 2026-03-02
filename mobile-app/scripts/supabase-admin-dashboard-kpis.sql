@@ -42,7 +42,10 @@ begin
         select
           date_trunc('day', now()) as today_start,
           date_trunc('day', now()) + interval '1 day' as tomorrow_start,
-          date_trunc('day', now()) - interval '1 day' as yesterday_start
+          case
+            when extract(isodow from now()) = 1 then date_trunc('day', now()) - interval '2 day'
+            else date_trunc('day', now()) - interval '1 day'
+          end as yesterday_start
       ),
       orders_today as (
         select count(*)::bigint as value
@@ -161,7 +164,10 @@ begin
         select
           date_trunc('day', now()) as today_start,
           date_trunc('day', now()) + interval '1 day' as tomorrow_start,
-          date_trunc('day', now()) - interval '1 day' as yesterday_start
+          case
+            when extract(isodow from now()) = 1 then date_trunc('day', now()) - interval '2 day'
+            else date_trunc('day', now()) - interval '1 day'
+          end as yesterday_start
       ),
       orders_today as (
         select count(*)::bigint as value
@@ -280,7 +286,10 @@ begin
         select
           date_trunc('day', now()) as today_start,
           date_trunc('day', now()) + interval '1 day' as tomorrow_start,
-          date_trunc('day', now()) - interval '1 day' as yesterday_start
+          case
+            when extract(isodow from now()) = 1 then date_trunc('day', now()) - interval '2 day'
+            else date_trunc('day', now()) - interval '1 day'
+          end as yesterday_start
       ),
       orders_today as (
         select count(*)::bigint as value

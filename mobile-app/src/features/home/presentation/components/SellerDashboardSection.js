@@ -8,6 +8,8 @@ export default function SellerDashboardSection({
   loading,
   todayOrders,
   totalSales,
+  todayOrdersDelta,
+  salesTodayVsYesterdayDelta,
   realtimeStatus,
   lastRealtimeEventAt,
   toMoney,
@@ -17,6 +19,26 @@ export default function SellerDashboardSection({
   onOpenProfile,
   styles
 }) {
+  const getDeltaTrend = (value) => {
+    const safe = Number(value || 0);
+    if (!Number.isFinite(safe) || safe === 0) return { icon: 'remove', text: 'Igual que ayer', tone: 'neutral' };
+    if (safe > 0) return { icon: 'arrow-up', text: `+${safe} vs ayer`, tone: 'up' };
+    return { icon: 'arrow-down', text: `${safe} vs ayer`, tone: 'down' };
+  };
+  const getMoneyTrend = (value) => {
+    const safe = Number(value || 0);
+    if (!Number.isFinite(safe) || safe === 0) return { icon: 'remove', text: 'Hoy vs ayer: sin cambio', tone: 'neutral' };
+    if (safe > 0) return { icon: 'arrow-up', text: `Hoy vs ayer: +${toMoney(safe)}`, tone: 'up' };
+    return { icon: 'arrow-down', text: `Hoy vs ayer: ${toMoney(safe)}`, tone: 'down' };
+  };
+  const getTrendColor = (tone) => {
+    if (tone === 'up') return '#27AE60';
+    if (tone === 'down') return '#E74C3C';
+    return '#6B7280';
+  };
+  const ordersTrend = getDeltaTrend(todayOrdersDelta);
+  const salesTrend = getMoneyTrend(salesTodayVsYesterdayDelta);
+
   return (
     <>
       <View style={[styles.kpiRow, styles.kpiRowOverlay]}>
@@ -26,7 +48,16 @@ export default function SellerDashboardSection({
           </View>
           <Text style={styles.kpiLabel}>Ordenes hoy</Text>
           <Text style={styles.kpiValue}>{loading ? '...' : todayOrders}</Text>
-          <Text style={styles.kpiHint}>Tocar para ver detalle</Text>
+          <View style={styles.kpiTrendRow}>
+            <Ionicons
+              name={loading ? 'remove' : ordersTrend.icon}
+              size={12}
+              color={loading ? '#6B7280' : getTrendColor(ordersTrend.tone)}
+            />
+            <Text style={[styles.kpiHint, styles.kpiHintTrend, { color: loading ? '#6B7280' : getTrendColor(ordersTrend.tone) }]}>
+              {loading ? '...' : ordersTrend.text}
+            </Text>
+          </View>
         </Pressable>
         <Pressable style={styles.kpiCard} onPress={onOpenSalesSummary}>
           <View style={styles.kpiIconWrap}>
@@ -34,7 +65,16 @@ export default function SellerDashboardSection({
           </View>
           <Text style={styles.kpiLabel}>Ventas de hoy</Text>
           <Text style={styles.kpiValue}>{loading ? '...' : toMoney(totalSales)}</Text>
-          <Text style={styles.kpiHint}>Tocar para ver detalle</Text>
+          <View style={styles.kpiTrendRow}>
+            <Ionicons
+              name={loading ? 'remove' : salesTrend.icon}
+              size={12}
+              color={loading ? '#6B7280' : getTrendColor(salesTrend.tone)}
+            />
+            <Text style={[styles.kpiHint, styles.kpiHintTrend, { color: loading ? '#6B7280' : getTrendColor(salesTrend.tone) }]}>
+              {loading ? '...' : salesTrend.text}
+            </Text>
+          </View>
         </Pressable>
       </View>
 

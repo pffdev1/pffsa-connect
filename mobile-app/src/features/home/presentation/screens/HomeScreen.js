@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import { Button, Divider, Portal, Surface } from 'react-native-paper';
@@ -43,6 +43,8 @@ export default function HomeScreen() {
   const [profileRole, setProfileRole] = useState('vendedor');
   const [todayOrders, setTodayOrders] = useState(0);
   const [totalSales, setTotalSales] = useState(0);
+  const [todayOrdersDelta, setTodayOrdersDelta] = useState(0);
+  const [salesTodayVsYesterdayDelta, setSalesTodayVsYesterdayDelta] = useState(0);
   const [realtimeStatus, setRealtimeStatus] = useState('CONNECTING');
   const [lastRealtimeEventAt, setLastRealtimeEventAt] = useState('');
   const [ordersTodayModalVisible, setOrdersTodayModalVisible] = useState(false);
@@ -146,9 +148,16 @@ export default function HomeScreen() {
         await loadAdminDashboard();
         return;
       }
-      const { todayOrders: nextTodayOrders, totalSales: nextTotalSales } = await loadVendorKpis(context.userId);
+      const {
+        todayOrders: nextTodayOrders,
+        totalSales: nextTotalSales,
+        todayOrdersDelta: nextTodayOrdersDelta,
+        salesTodayVsYesterdayDelta: nextSalesTodayVsYesterdayDelta
+      } = await loadVendorKpis(context.userId);
       setTodayOrders(nextTodayOrders);
       setTotalSales(nextTotalSales);
+      setTodayOrdersDelta(nextTodayOrdersDelta);
+      setSalesTodayVsYesterdayDelta(nextSalesTodayVsYesterdayDelta);
     } catch (error) {
       if (isInvalidRefreshTokenError(error)) {
         await clearLocalSupabaseSession();
@@ -477,6 +486,8 @@ export default function HomeScreen() {
                 loading={loading}
                 todayOrders={todayOrders}
                 totalSales={totalSales}
+                todayOrdersDelta={todayOrdersDelta}
+                salesTodayVsYesterdayDelta={salesTodayVsYesterdayDelta}
                 realtimeStatus={realtimeStatus}
                 lastRealtimeEventAt={lastRealtimeEventAt}
                 toMoney={toMoney}
@@ -537,7 +548,13 @@ export default function HomeScreen() {
                   </View>
                 </View>
                 <Divider />
-                <View style={styles.notificationsBody}>
+                <ScrollView
+                  style={styles.notificationsBody}
+                  contentContainerStyle={styles.notificationsBodyContent}
+                  showsVerticalScrollIndicator
+                  keyboardShouldPersistTaps="handled"
+                  bounces={Platform.OS === 'ios'}
+                >
                   {unlockNotifications.length === 0 ? (
                     <Text style={styles.notificationsEmpty}>Sin notificaciones</Text>
                   ) : (
@@ -554,7 +571,7 @@ export default function HomeScreen() {
                       </View>
                     ))
                   )}
-                </View>
+                </ScrollView>
               </View>
             </Surface>
           </View>
@@ -721,12 +738,14 @@ const styles = StyleSheet.create({
   notificationsPanel: {
     width: '100%',
     maxWidth: 560,
-    maxHeight: '70%',
+    maxHeight: Platform.OS === 'ios' ? '82%' : '70%',
     backgroundColor: '#FFF',
     borderRadius: 14,
-    paddingTop: 4
+    paddingTop: 4,
+    overflow: 'hidden'
   },
   notificationsPanelContent: {
+    flexShrink: 1,
     borderRadius: 14,
     overflow: 'hidden'
   },
@@ -748,8 +767,12 @@ const styles = StyleSheet.create({
     color: COLORS.primary
   },
   notificationsBody: {
+    flexGrow: 0,
     paddingHorizontal: 12,
     paddingVertical: 8
+  },
+  notificationsBodyContent: {
+    paddingBottom: 6
   },
   notificationsEmpty: {
     color: COLORS.textLight,
