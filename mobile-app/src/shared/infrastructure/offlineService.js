@@ -129,6 +129,32 @@ const normalizeText = (value) => String(value || '').trim();
 const nowIso = () => new Date().toISOString();
 const buildQueueFingerprint = (rpcPayload) => JSON.stringify(rpcPayload || {});
 const buildErrorText = (error) => `${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`.toLowerCase();
+const NOISE_ERROR_PATTERNS = [
+  'no se pudo ejecutar create_sales_order',
+  'failed to fetch',
+  'network request failed',
+  'auth session missing',
+  'jwt'
+];
+
+const toUserVisibleErrorDetail = (error) => {
+  const candidates = [
+    normalizeText(error?.message),
+    normalizeText(error?.details),
+    normalizeText(error?.hint)
+  ]
+    .filter(Boolean)
+    .filter((value) => {
+      const lower = value.toLowerCase();
+      return !NOISE_ERROR_PATTERNS.some((pattern) => lower.includes(pattern));
+    });
+
+  if (!candidates.length) return '';
+
+  const [first] = candidates;
+  return first.replace(/\s+/g, ' ').slice(0, 240);
+};
+
 const isMissingRpcParamError = (error, paramName) => {
   const rawRpcError = buildErrorText(error);
   return (
@@ -195,6 +221,7 @@ const shouldRetryQueueItemNow = (item) => {
 
 export const getOrderErrorMessage = (error) => {
   const code = classifyOrderError(error);
+  const specificDetail = toUserVisibleErrorDetail(error);
   if (code === 'network' || code === 'timeout') {
     return 'No pudimos enviar tu pedido por conexion. Se guardo localmente y se enviara automaticamente.';
   }
@@ -202,11 +229,13 @@ export const getOrderErrorMessage = (error) => {
     return 'Tu sesion expiro. Inicia sesion nuevamente para enviar el pedido.';
   }
   if (code === 'validation') {
+    if (specificDetail) return specificDetail;
     return 'El pedido tiene datos invalidos. Revisa cliente, fecha, almacen y lineas.';
   }
   if (code === 'server') {
     return 'El servidor no respondio correctamente. Tu pedido quedo pendiente para reintento.';
   }
+  if (specificDetail) return specificDetail;
   return 'No se pudo guardar el pedido en este momento. Intenta nuevamente.';
 };
 
