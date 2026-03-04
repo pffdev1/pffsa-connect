@@ -57,9 +57,13 @@ const PRICE_SOURCE_PRIORITY = {
 };
 
 const getPriceSourcePriority = (source) => PRICE_SOURCE_PRIORITY[String(source || '').trim()] || 0;
-const parsePrice = (value) => {
+  const parsePrice = (value) => {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
+};
+const parseInventoryValue = (value) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 };
 
 const normalizeCatalogRows = (rows = []) => {
@@ -72,7 +76,9 @@ const normalizeCatalogRows = (rows = []) => {
     const candidate = {
       ...row,
       ItemCode: itemCode,
-      Price: parsePrice(row?.Price)
+      Price: parsePrice(row?.Price),
+      Inventory100: parseInventoryValue(row?.Inventory100 ?? row?.inventory100),
+      Inventory010: parseInventoryValue(row?.Inventory010 ?? row?.inventory010)
     };
 
     const current = byItemCode.get(itemCode);
@@ -83,9 +89,12 @@ const normalizeCatalogRows = (rows = []) => {
 
     const currentPriority = getPriceSourcePriority(current.PriceSource);
     const candidatePriority = getPriceSourcePriority(candidate.PriceSource);
+    const candidateHasStock = Number.isFinite(candidate.Inventory100) || Number.isFinite(candidate.Inventory010);
+    const currentHasStock = Number.isFinite(current.Inventory100) || Number.isFinite(current.Inventory010);
     const shouldReplace =
       candidatePriority > currentPriority ||
-      (candidatePriority === currentPriority && candidate.Price > 0 && current.Price <= 0);
+      (candidatePriority === currentPriority && candidate.Price > 0 && current.Price <= 0) ||
+      (candidatePriority === currentPriority && candidateHasStock && !currentHasStock);
 
     if (shouldReplace) {
       byItemCode.set(itemCode, candidate);
@@ -203,11 +212,13 @@ export default function Catalogo() {
               ItemName,
               Marca,
               UOM,
-              Price,
-              PriceSource,
-              CardCode,
-              Url
-            `
+                Price,
+                PriceSource,
+                Inventory100,
+                Inventory010,
+                CardCode,
+                Url
+              `
           )
           .eq('CardCode', safeCardCode);
 
@@ -229,6 +240,8 @@ export default function Catalogo() {
                 Marca,
                 UOM,
                 Price,
+                Inventory100,
+                Inventory010,
                 CardCode,
                 Url
               `

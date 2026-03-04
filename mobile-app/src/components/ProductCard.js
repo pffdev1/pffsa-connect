@@ -6,6 +6,12 @@ import { COLORS, GLOBAL_STYLES } from '../constants/theme';
 
 const FALLBACK_PRODUCT =
   'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=1200&q=80';
+const formatInventoryLabel = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 'N/D';
+  if (Number.isInteger(n)) return String(n);
+  return n.toFixed(2).replace(/\.?0+$/, '');
+};
 
 function ProductCard({ item, onAdd, loading = false, isInCart = false }) {
   const rawImageUrl = item?.Url ?? item?.url ?? item?.image_url;
@@ -51,6 +57,8 @@ function ProductCard({ item, onAdd, loading = false, isInCart = false }) {
   const imageUrl = !hasImageError && normalizedImageUrl ? normalizedImageUrl : FALLBACK_PRODUCT;
   const uom = String(item?.UOM ?? item?.uom ?? '').trim().toUpperCase();
   const priceText = `$${parseFloat(item.Price || 0).toFixed(2)}${uom ? ` / ${uom}` : ''}`;
+  const stock100 = formatInventoryLabel(item?.Inventory100 ?? item?.inventory100);
+  const stock010 = formatInventoryLabel(item?.Inventory010 ?? item?.inventory010);
   const handleQtyChange = (value) => {
     const rawValue = String(value || '').replace(',', '.');
     const cleaned = rawValue.replace(/[^0-9.]/g, '');
@@ -100,6 +108,14 @@ function ProductCard({ item, onAdd, loading = false, isInCart = false }) {
           <Text style={styles.name} numberOfLines={2}>
             {item.ItemName}
           </Text>
+          <View style={styles.stockRow}>
+            <View style={styles.stockChip}>
+              <Text style={styles.stockText}>CEDI: {stock100}</Text>
+            </View>
+            <View style={styles.stockChip}>
+              <Text style={styles.stockText}>CHIRIQUI: {stock010}</Text>
+            </View>
+          </View>
           <View style={styles.footer}>
             <Text style={styles.price}>{priceText}</Text>
             <View style={styles.addControls}>
@@ -148,6 +164,10 @@ const areEqual = (prevProps, nextProps) => {
     prev.ItemName === next.ItemName &&
     prev.Price === next.Price &&
     prev.UOM === next.UOM &&
+    prev.Inventory100 === next.Inventory100 &&
+    prev.Inventory010 === next.Inventory010 &&
+    prev.inventory100 === next.inventory100 &&
+    prev.inventory010 === next.inventory010 &&
     prev.Url === next.Url &&
     prev.url === next.url &&
     prev.image_url === next.image_url
@@ -180,6 +200,23 @@ const styles = StyleSheet.create({
   content: { padding: 12 },
   code: { fontSize: 10, color: COLORS.textLight, marginBottom: 4 },
   name: { fontSize: 15, fontWeight: '700', color: COLORS.primary, minHeight: 40 },
+  stockRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  stockChip: {
+    borderRadius: 999,
+    backgroundColor: '#EFF4FA',
+    paddingHorizontal: 8,
+    paddingVertical: 3
+  },
+  stockText: {
+    color: '#4B5D73',
+    fontSize: 11,
+    fontWeight: '700'
+  },
   footer: { marginTop: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   price: { fontSize: 17, fontWeight: '700', color: COLORS.text },
   addControls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
