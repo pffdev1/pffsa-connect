@@ -72,11 +72,34 @@ const SAVED_CART_TTL_MS = 48 * 60 * 60 * 1000;
 const SAVED_CART_CLOCK_REFRESH_MS = 60 * 1000;
 const PRODUCT_FALLBACK_IMAGE =
   'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=300&q=80';
+const SHARE_IMAGE_CDN_ORIGIN = 'https://uploadimage.pedersenfinefoods.com';
+const SHARE_IMAGE_CDN_PARAMS = 'width=120,height=120,fit=contain,quality=60,format=auto';
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const resolveCartImageUrl = (item) => {
   const rawUrl = item?.Url ?? item?.url ?? item?.image_url;
   const safeUrl = String(rawUrl || '').trim();
   return safeUrl || PRODUCT_FALLBACK_IMAGE;
+};
+const resolvePdfThumbUrl = (rawImageUrl, placeholderUrl = '') => {
+  const safeRaw = String(rawImageUrl || '').trim();
+  if (!safeRaw) return String(placeholderUrl || '').trim();
+  if (safeRaw.includes('/cdn-cgi/image/')) return safeRaw;
+
+  const fallback = safeRaw;
+  try {
+    const parsedUrl = new URL(safeRaw);
+    if (parsedUrl.origin !== SHARE_IMAGE_CDN_ORIGIN) return fallback;
+
+    const fileName = decodeURIComponent(parsedUrl.pathname.split('/').pop() || '').trim();
+    if (!fileName) return fallback;
+
+    return `${SHARE_IMAGE_CDN_ORIGIN}/cdn-cgi/image/${SHARE_IMAGE_CDN_PARAMS}/${encodeURIComponent(fileName)}`;
+  } catch (_error) {
+    const withoutQuery = safeRaw.split('?')[0];
+    const fileName = decodeURIComponent(withoutQuery.split('/').pop() || '').trim();
+    if (!fileName) return fallback;
+    return `${SHARE_IMAGE_CDN_ORIGIN}/cdn-cgi/image/${SHARE_IMAGE_CDN_PARAMS}/${encodeURIComponent(fileName)}`;
+  }
 };
 const escapeHtml = (value = '') =>
   String(value || '')
@@ -1017,8 +1040,10 @@ export default function Pedido() {
             const qty = Number(item?.quantity || 0);
             const price = Number(item?.Price || 0);
             const subtotal = qty * price;
-            const rawImageUrl = resolveCartImageUrl(item);
-            const imageUrl = escapeHtml(String(rawImageUrl || '').trim() || placeholder);
+            const rawImageUrl = String(item?.Url ?? item?.url ?? item?.image_url ?? '').trim();
+            const sourceImageUrl = rawImageUrl || placeholder;
+            const imageThumbUrl = resolvePdfThumbUrl(sourceImageUrl, placeholder);
+            const imageUrl = escapeHtml(String(imageThumbUrl || '').trim() || placeholder);
 
             return `
               <tr class="row-item">
