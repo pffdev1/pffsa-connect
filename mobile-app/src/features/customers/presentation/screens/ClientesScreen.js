@@ -16,9 +16,7 @@ import CustomerGrid from '../components/CustomerGrid';
 import {
   fetchAuthUser,
   fetchCustomersPage,
-  fetchProfileById,
-  removeCustomersRealtimeChannel,
-  subscribeCustomersRealtime
+  fetchProfileById
 } from '../../infrastructure/customersRepository';
 import { isConnectionLikeError, withTimeout } from '../../application/customersQueryPolicy';
 import {
@@ -52,11 +50,10 @@ export default function Clientes() {
   const [authUserId, setAuthUserId] = useState('');
   const isMounted = useRef(true);
   const clientesRef = useRef([]);
-  const customersIndexRef = useRef(new Map());
   const customersRequestSeqRef = useRef(0);
-  const realtimeErrorRef = useRef('');
   const isLoadingMoreRef = useRef(false);
   const hasInitializedSearchRef = useRef(false);
+  const hasFocusedOnceRef = useRef(false);
   const handledOrderCompletedRef = useRef('');
   const router = useRouter();
   const { orderCompleted } = useLocalSearchParams();
@@ -96,15 +93,6 @@ export default function Clientes() {
     setSearch('');
     setDebouncedSearch('');
   }, [orderCompleted]);
-
-  useFocusEffect(
-    useCallback(() => {
-      setSelectedClient(null);
-      setSearch('');
-      setDebouncedSearch('');
-      cleanupCachedPrefix({ prefix: CUSTOMERS_CACHE_KEY_PREFIX, maxEntries: CUSTOMERS_CACHE_MAX_KEYS }).catch(() => {});
-    }, [])
-  );
 
   useEffect(() => {
     isMounted.current = true;
@@ -197,44 +185,6 @@ export default function Clientes() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (!profile) return undefined;
-
-    const channel = subscribeCustomersRealtime({
-      role: profile.role,
-      onCustomerUpdated: (payload) => {
-        const nextCardCode = String(payload?.new?.CardCode || '').trim();
-        if (!nextCardCode) return;
-        setClientes((prev) => {
-          if (!Array.isArray(prev)) return prev;
-          const nextIndex = customersIndexRef.current.get(nextCardCode);
-          if (nextIndex === undefined || nextIndex < 0 || nextIndex >= prev.length) return prev;
-          const updatedRow = { ...prev[nextIndex], ...payload.new };
-          const copy = [...prev];
-          copy[nextIndex] = updatedRow;
-          return copy;
-        });
-      },
-      onStatusChanged: (status, err) => {
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          const errorText = String(err?.message || err?.error || 'unknown_error');
-          if (realtimeErrorRef.current !== errorText) {
-            realtimeErrorRef.current = errorText;
-            console.error('Realtime customers channel error:', {
-              status,
-              filter: '(none)',
-              reason: errorText
-            });
-          }
-        }
-      }
-    });
-
-    return () => {
-      removeCustomersRealtimeChannel(channel);
-    };
-  }, [profile]);
-
   const fetchClientes = useCallback(async (reset = false, currentProfile = profile, searchTerm = debouncedSearch, showConnectionAlert = false) => {
     const requestSeq = ++customersRequestSeqRef.current;
     const startedAt = Date.now();
@@ -320,13 +270,27 @@ export default function Clientes() {
 
   useEffect(() => {
     clientesRef.current = Array.isArray(clientes) ? clientes : [];
-    const nextIndex = new Map();
-    clientesRef.current.forEach((item, index) => {
-      const code = String(item?.CardCode || '').trim();
-      if (code) nextIndex.set(code, index);
-    });
-    customersIndexRef.current = nextIndex;
   }, [clientes]);
+
+  useFocusEffect(
+    useCallback(() => {
+      setSelectedClient(null);
+      setSearch('');
+      setDebouncedSearch('');
+      cleanupCachedPrefix({ prefix: CUSTOMERS_CACHE_KEY_PREFIX, maxEntries: CUSTOMERS_CACHE_MAX_KEYS }).catch(() => {});
+
+      if (!hasFocusedOnceRef.current) {
+        hasFocusedOnceRef.current = true;
+        return undefined;
+      }
+
+      if (profile) {
+        setHasMore(true);
+        fetchClientes(true, profile, '');
+      }
+      return undefined;
+    }, [fetchClientes, profile])
+  );
 
   useEffect(() => {
     if (!profile) return;

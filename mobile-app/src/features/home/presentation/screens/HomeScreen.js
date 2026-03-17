@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { Button, Divider, Portal, Surface } from 'react-native-paper';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -24,6 +25,7 @@ import {
   loadUserContext,
   loadVendorKpis
 } from '../../application/homeDashboardService';
+import { fetchCustomerUnlockEventsSince } from '../../infrastructure/homeRepository';
 import SellerHero from '../components/SellerHero';
 import AdminDashboardSection from '../components/AdminDashboardSection';
 import SellerDashboardSection from '../components/SellerDashboardSection';
@@ -32,6 +34,7 @@ import SalesSummaryModal from '../components/SalesSummaryModal';
 import ErrorOrdersModal from '../components/ErrorOrdersModal';
 const MAX_UNLOCK_NOTIFICATIONS = 30;
 const NOTIFICATION_DEDUPE_WINDOW_MS = 2 * 60 * 1000;
+const UNLOCK_EVENTS_POLL_MS = 60 * 1000;
 const LOGOUT_TIMEOUT_MS = 5000;
 
 export default function HomeScreen() {
@@ -83,9 +86,11 @@ export default function HomeScreen() {
     processingTotal: 0
   });
   const [unlockNotifications, setUnlockNotifications] = useState([]);
+  const [notificationsHydrated, setNotificationsHydrated] = useState(false);
   const [notificationsVisible, setNotificationsVisible] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const unlockNotificationIndexRef = useRef(new Map());
+  const unlockEventsCursorRef = useRef('');
   const hasHydratedNotificationsRef = useRef(false);
   const unreadUnlockCount = useMemo(() => unlockNotifications.filter((item) => !item.read).length, [unlockNotifications]);
   const notificationsStorageKey = useMemo(() => {
@@ -179,6 +184,7 @@ export default function HomeScreen() {
 
     let cancelled = false;
     hasHydratedNotificationsRef.current = false;
+    setNotificationsHydrated(false);
 
     const hydrateNotifications = async () => {
       try {
@@ -205,15 +211,18 @@ export default function HomeScreen() {
         unlockNotificationIndexRef.current = new Map(
           normalized.map((item) => [String(item.cardCode || '').trim(), new Date(item.createdAt || 0).getTime() || 0])
         );
+        unlockEventsCursorRef.current = new Date().toISOString();
         setUnlockNotifications(normalized);
       } catch (_error) {
         if (!cancelled) {
           unlockNotificationIndexRef.current = new Map();
+          unlockEventsCursorRef.current = new Date().toISOString();
           setUnlockNotifications([]);
         }
       } finally {
         if (!cancelled) {
           hasHydratedNotificationsRef.current = true;
+          setNotificationsHydrated(true);
         }
       }
     };
@@ -223,6 +232,7 @@ export default function HomeScreen() {
     return () => {
       cancelled = true;
       hasHydratedNotificationsRef.current = false;
+      setNotificationsHydrated(false);
     };
   }, [notificationsStorageKey]);
 
@@ -253,31 +263,41 @@ export default function HomeScreen() {
     setUnlockNotifications((prev) => [notificationItem, ...prev].slice(0, MAX_UNLOCK_NOTIFICATIONS));
   }, []);
 
-  useEffect(() => {
-    if (!authUserId) return undefined;
+  const pollUnlockEvents = useCallback(async () => {
+    if (!authUserId || !hasHydratedNotificationsRef.current) return;
 
-    const channel = supabase
-      .channel(`home-customers-unlock-${authUserId}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'customers' },
-        (payload) => {
-          const oldBlocked = normalizeSellerName(String(payload?.old?.Bloqueado || ''));
-          const newBlocked = normalizeSellerName(String(payload?.new?.Bloqueado || ''));
-          if (oldBlocked === 'Y' && newBlocked === 'N') {
-            pushUnlockNotification({
-              cardCode: payload?.new?.CardCode || '',
-              customerName: payload?.new?.CardFName || payload?.new?.CardName || payload?.new?.CardCode
-            });
-          }
+    const sinceIso = String(unlockEventsCursorRef.current || '').trim() || new Date().toISOString();
+    const sellerName = normalizeSellerName(fullName);
+
+    try {
+      const { data, error } = await fetchCustomerUnlockEventsSince({ sinceIso, limit: 80 });
+      if (error) throw error;
+
+      const rows = Array.isArray(data) ? data : [];
+      let latestSeenAt = sinceIso;
+
+      rows.forEach((row) => {
+        const createdAt = String(row?.created_at || '').trim();
+        const createdAtMs = Date.parse(createdAt);
+        const latestSeenAtMs = Date.parse(latestSeenAt);
+        if (createdAt && Number.isFinite(createdAtMs) && (!Number.isFinite(latestSeenAtMs) || createdAtMs > latestSeenAtMs)) {
+          latestSeenAt = createdAt;
         }
-      )
-      .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [authUserId, profileRole, pushUnlockNotification]);
+        const rowSellerName = normalizeSellerName(String(row?.vendedor || ''));
+        if (!isAdmin && sellerName && rowSellerName && rowSellerName !== sellerName) return;
+
+        pushUnlockNotification({
+          cardCode: row?.card_code || '',
+          customerName: row?.customer_name || row?.card_code || 'Cliente sin nombre'
+        });
+      });
+
+      unlockEventsCursorRef.current = latestSeenAt || new Date().toISOString();
+    } catch (_error) {
+      // Retry on the next polling cycle.
+    }
+  }, [authUserId, fullName, isAdmin, pushUnlockNotification]);
 
   const openNotifications = useCallback(() => {
     setUnlockNotifications((prev) => prev.map((item) => ({ ...item, read: true })));
@@ -288,6 +308,19 @@ export default function HomeScreen() {
     unlockNotificationIndexRef.current = new Map();
     setUnlockNotifications([]);
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!authUserId || !notificationsHydrated) return undefined;
+
+      pollUnlockEvents();
+      const intervalId = setInterval(() => {
+        pollUnlockEvents();
+      }, UNLOCK_EVENTS_POLL_MS);
+
+      return () => clearInterval(intervalId);
+    }, [authUserId, notificationsHydrated, pollUnlockEvents])
+  );
 
   useEffect(() => {
     let channel;

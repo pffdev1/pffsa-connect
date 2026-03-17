@@ -28,20 +28,4 @@ export const fetchProfileById = async (userId) =>
 export const fetchCustomersPage = async ({ from, to, searchTerm = '' }) =>
   buildCustomersQuery({ from, to, searchTerm });
 
-export const subscribeCustomersRealtime = ({ role, onCustomerUpdated, onStatusChanged }) =>
-  supabase
-    .channel(`customers-realtime-${role}`)
-    .on(
-      'postgres_changes',
-      {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'customers'
-      },
-      onCustomerUpdated
-    )
-    .subscribe(onStatusChanged);
-
-export const removeCustomersRealtimeChannel = async (channel) => supabase.removeChannel(channel);
-
 export { CUSTOMER_SELECT_FIELDS };

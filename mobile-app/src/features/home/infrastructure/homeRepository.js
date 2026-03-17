@@ -114,6 +114,18 @@ export const fetchSellerNamesByIds = async (sellerIds = []) => {
   return data || [];
 };
 
+export const fetchCustomerUnlockEventsSince = async ({ sinceIso = '', limit = 50 } = {}) => {
+  const safeSinceIso = String(sinceIso || '').trim();
+  if (!safeSinceIso) return { data: [], error: null };
+
+  return supabase
+    .from('customer_unlock_push_events')
+    .select('id, card_code, customer_name, vendedor, created_at')
+    .gt('created_at', safeSinceIso)
+    .order('created_at', { ascending: true })
+    .limit(Math.max(1, Math.min(Number(limit) || 50, 200)));
+};
+
 export const fetchAdminSellerStats = async () => supabase.rpc('get_admin_seller_stats');
 export const fetchAdminDashboardKpis = async () => supabase.rpc('get_admin_dashboard_kpis');
 export const fetchQueueHealth = async () => supabase.from('vw_sales_orders_queue_health').select('*').maybeSingle();
