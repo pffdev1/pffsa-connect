@@ -12,6 +12,7 @@ import {
   fetchAdminDashboardKpis,
   fetchAdminSellerStats,
   fetchAllOrders,
+  fetchAllOrdersCount,
   fetchAuthUser,
   fetchCustomerNamesByCardCodes,
   fetchOrdersCountInRange,
@@ -380,15 +381,15 @@ export const loadSalesSummaryData = async ({ authUserId, role }) => {
     };
   }
 
-  const [{ data: allOrders, error: ordersError }, { data: kpiRows, error: kpiError }] = await Promise.all([
-    fetchAllOrders(),
+  const [{ count: allOrdersCount, error: ordersError }, { data: kpiRows, error: kpiError }] = await Promise.all([
+    fetchAllOrdersCount(),
     fetchAdminDashboardKpis()
   ]);
   if (ordersError) throw ordersError;
   if (kpiError) throw kpiError;
   const kpiRow = Array.isArray(kpiRows) ? kpiRows[0] : kpiRows || {};
   return {
-    allOrdersCount: (allOrders || []).length,
+    allOrdersCount: Number(allOrdersCount || 0),
     allSalesTotal: Number(kpiRow?.sales_global_total || 0)
   };
 };

@@ -85,6 +85,21 @@ export const fetchAllOrders = async ({ createdBy = '' } = {}) => {
   return { data: [], error: { message: 'No se pudo consultar listado de sales_orders con los esquemas esperados.' } };
 };
 
+export const fetchAllOrdersCount = async ({ createdBy = '' } = {}) => {
+  const attempts = ['id, created_by, seller_id', 'id, created_by', 'id, seller_id', 'id'];
+
+  for (const select of attempts) {
+    let query = supabase.from('sales_orders').select(select, { head: true, count: 'exact' });
+    query = applyOrderOwnerFilter(query, { select, ownerId: createdBy });
+    const result = await query;
+    if (!result.error) {
+      return { count: Number(result.count || 0), error: null };
+    }
+  }
+
+  return { count: 0, error: { message: 'No se pudo contar el total de sales_orders con los esquemas esperados.' } };
+};
+
 export const fetchLinesByOrderIds = async (orderIds = []) => {
   if (!Array.isArray(orderIds) || orderIds.length === 0) return { data: [], error: null };
   const byOrderId = await supabase.from('sales_order_lines').select('*').in('order_id', orderIds);
