@@ -52,6 +52,7 @@ export default function Clientes() {
   const clientesRef = useRef([]);
   const customersRequestSeqRef = useRef(0);
   const isLoadingMoreRef = useRef(false);
+  const fetchClientesRef = useRef(null);
   const hasInitializedSearchRef = useRef(false);
   const hasFocusedOnceRef = useRef(false);
   const handledOrderCompletedRef = useRef('');
@@ -269,6 +270,10 @@ export default function Clientes() {
   }, [authUserId, clientes?.length, debouncedSearch, hasMore, loadingMore, profile]);
 
   useEffect(() => {
+    fetchClientesRef.current = fetchClientes;
+  }, [fetchClientes]);
+
+  useEffect(() => {
     clientesRef.current = Array.isArray(clientes) ? clientes : [];
   }, [clientes]);
 
@@ -286,10 +291,10 @@ export default function Clientes() {
 
       if (profile) {
         setHasMore(true);
-        fetchClientes(true, profile, '');
+        fetchClientesRef.current?.(true, profile, '');
       }
       return undefined;
-    }, [fetchClientes, profile])
+    }, [profile])
   );
 
   useEffect(() => {
