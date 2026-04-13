@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { COLORS } from '../../../../constants/theme';
 import { login } from '../../application/loginUseCase';
+import { supabase } from '../../../../shared/infrastructure/supabaseClient';
 
 const PRIMARY_LOGO = require('../../../../../assets/logo.png');
 const FALLBACK_LOGO = require('../../../../../assets/mainlogo.png');
@@ -33,10 +34,12 @@ export default function Login() {
   const { refresh } = useLocalSearchParams();
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
   const [useFallbackLogo, setUseFallbackLogo] = useState(false);
   const {
     control,
     handleSubmit,
+    getValues,
     formState: { errors }
   } = useForm({
     resolver: zodResolver(loginSchema),
@@ -103,6 +106,37 @@ export default function Login() {
       setLoading(false);
     }
   });
+
+  const handleForgotPassword = async () => {
+    const email = String(getValues('email') || '').trim().toLowerCase();
+    if (!email) {
+      Alert.alert('Correo requerido', 'Ingresa tu correo institucional para enviarte el enlace de recuperacion.');
+      return;
+    }
+
+    const isEmailLike = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    if (!isEmailLike) {
+      Alert.alert('Correo invalido', 'Ingresa un correo valido para recuperar tu contrasena.');
+      return;
+    }
+
+    try {
+      setRecoveryLoading(true);
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: 'pffsa-connect://reset-password'
+      });
+      if (error) throw error;
+
+      Alert.alert(
+        'Correo enviado',
+        'Te enviamos un enlace de recuperacion. Abre ese enlace desde tu celular para crear una nueva contrasena.'
+      );
+    } catch (error) {
+      Alert.alert('No se pudo enviar', error?.message || 'No pudimos enviar el correo de recuperacion.');
+    } finally {
+      setRecoveryLoading(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -202,6 +236,17 @@ export default function Login() {
               >
                 {loading ? 'ACCEDIENDO...' : 'ENTRAR'}
               </Button>
+              <Button
+                mode="text"
+                onPress={handleForgotPassword}
+                loading={recoveryLoading}
+                disabled={loading || recoveryLoading}
+                textColor={COLORS.primary}
+                style={styles.forgotButton}
+                labelStyle={styles.forgotButtonLabel}
+              >
+                {recoveryLoading ? 'ENVIANDO...' : 'OLVIDE MI CONTRASENA'}
+              </Button>
 
             </View>
 
@@ -276,6 +321,8 @@ const styles = StyleSheet.create({
   },
   loginButtonContent: { height: 48 },
   loginButtonLabel: { color: '#FFF', fontWeight: 'bold', fontSize: 16, letterSpacing: 0.3 },
+  forgotButton: { marginTop: 6, alignSelf: 'center' },
+  forgotButtonLabel: { fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
   footer: { marginTop: 22, alignItems: 'center' },
   footerMain: { color: COLORS.textLight, fontSize: 12, fontWeight: 'bold' },
   footerSub: { color: COLORS.textLight, fontSize: 10, marginTop: 4 }
